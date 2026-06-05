@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sendout Analytics Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- SheetJS for Excel parsing -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
+  <!-- Chart.js for visualizations -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+  <!-- Flatpickr for date range -->
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
+</head>
+<body>
+
+  <!-- ============================================================
+       SIDEBAR
+  ============================================================ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">◈</span>
+      <span class="logo-text">SendIQ</span>
+    </div>
+
+    <!-- IMPORT SECTION -->
+    <section class="sidebar-section">
+      <h3 class="sidebar-section-title">Data Import</h3>
+
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">⬆</div>
+        <p>Drop .xlsx or .csv files here</p>
+        <span>or</span>
+        <label class="btn-upload" for="fileInput">Browse Files</label>
+        <input type="file" id="fileInput" accept=".xlsx,.csv" multiple hidden />
+      </div>
+
+      <div class="import-status" id="importStatus"></div>
+      <div class="imported-files" id="importedFiles"></div>
+      <button class="btn-danger" id="clearDataBtn">Clear All Data</button>
+    </section>
+
+    <!-- FILTERS SECTION -->
+    <section class="sidebar-section">
+      <h3 class="sidebar-section-title">Filters</h3>
+
+      <div class="filter-group">
+        <label class="filter-label">Date Range</label>
+        <input type="text" id="dateRangePicker" class="input-date" placeholder="Select range…" readonly />
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Product</label>
+        <div class="multi-select" id="productSelect" data-field="product">
+          <div class="multi-select-trigger">
+            <span class="ms-label">All Products</span>
+            <span class="ms-arrow">▾</span>
+          </div>
+          <div class="multi-select-dropdown"></div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Market</label>
+        <div class="multi-select" id="marketSelect" data-field="market">
+          <div class="multi-select-trigger">
+            <span class="ms-label">All Markets</span>
+            <span class="ms-arrow">▾</span>
+          </div>
+          <div class="multi-select-dropdown"></div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Template (Company)</label>
+        <div class="multi-select" id="templateSelect" data-field="template">
+          <div class="multi-select-trigger">
+            <span class="ms-label">All Templates</span>
+            <span class="ms-arrow">▾</span>
+          </div>
+          <div class="multi-select-dropdown"></div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Sent Volume</label>
+        <div class="range-inputs">
+          <input type="number" id="sentMinInput" class="input-number" min="0" placeholder="Min" />
+          <input type="number" id="sentMaxInput" class="input-number" min="0" placeholder="Max" />
+        </div>
+      </div>
+
+      <button class="btn-reset" id="resetFiltersBtn">↺ Reset Filters</button>
+    </section>
+
+    <!-- EXPORT SECTION -->
+    <section class="sidebar-section">
+      <h3 class="sidebar-section-title">Export</h3>
+      <div class="export-actions">
+        <button class="btn-secondary" id="exportDocBtn" type="button">Summary DOC</button>
+        <button class="btn-secondary" id="exportPptxBtn" type="button">Summary PPTX</button>
+        <button class="btn-secondary" id="exportWeeklyDocBtn" type="button">Weekly DOC</button>
+        <button class="btn-secondary" id="exportDeepDiveDocBtn" type="button">Deep Dive DOC</button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============================================================
+       MAIN CONTENT
+  ============================================================ -->
+  <main class="main-content">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title">Email & SMS Analytics</h1>
+        <span class="data-badge" id="recordCount">0 records</span>
+      </div>
+      <div class="topbar-right">
+        <span class="last-updated" id="lastUpdated"></span>
+      </div>
+    </header>
+
+    <!-- KPI CARDS -->
+    <section class="kpi-grid">
+      <div class="kpi-card" data-metric="sent">
+        <div class="kpi-icon">✉</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Total Sent</span>
+          <span class="kpi-value" id="kpiSent">—</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" data-metric="delivered">
+        <div class="kpi-icon">✔</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Total Delivered</span>
+          <span class="kpi-value" id="kpiDelivered">—</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" data-metric="delivery-rate">
+        <div class="kpi-icon">⚡</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Delivery Rate</span>
+          <span class="kpi-value" id="kpiDeliveryRate">—</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" data-metric="open-rate">
+        <div class="kpi-icon">👁</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Open Rate</span>
+          <span class="kpi-value" id="kpiOpenRate">—</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" data-metric="click-rate">
+        <div class="kpi-icon">🖱</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Click Rate</span>
+          <span class="kpi-value" id="kpiClickRate">—</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" data-metric="ctor">
+        <div class="kpi-icon">🎯</div>
+        <div class="kpi-body">
+          <span class="kpi-label">CTOR</span>
+          <span class="kpi-value" id="kpiCtor">—</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- MAIN CHARTS ROW -->
+    <section class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Conversion Funnel</h2>
+          <span class="chart-subtitle">Absolute volumes</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="funnelChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Daily Performance</h2>
+          <span class="chart-subtitle">Open Rate & Click Rate over time</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="trendChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="chart-card chart-card-full">
+      <div class="chart-header">
+        <h2 class="chart-title">Weekly KPI Comparison</h2>
+        <span class="chart-subtitle">Total Sent, Delivered and rates by week</span>
+      </div>
+      <div class="chart-body chart-body-tall">
+        <canvas id="weeklyComparisonChart"></canvas>
+      </div>
+    </section>
+
+    <section class="insights-grid">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Week-over-week Change</h2>
+          <span class="chart-subtitle">Rate and volume movement compared to previous week</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="wowChangeChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Market x Product Heatmap</h2>
+          <span class="chart-subtitle">Click Rate by product and market</span>
+        </div>
+        <div class="heatmap-wrapper" id="marketProductHeatmap"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Campaign Size vs Performance</h2>
+          <span class="chart-subtitle">Sent volume compared with Click Rate</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="sizePerformanceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Channel Split</h2>
+          <span class="chart-subtitle">Email vs SMS performance</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="channelSplitChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-section insight-table-section">
+      <div class="table-header">
+        <h2 class="chart-title">Best / Worst Campaigns</h2>
+      </div>
+      <div class="split-tables">
+        <div class="top-details" id="bestCampaignsTable"></div>
+        <div class="top-details" id="worstCampaignsTable"></div>
+      </div>
+    </section>
+
+    <section class="table-section insight-table-section">
+      <div class="table-header">
+        <h2 class="chart-title">Repeat Campaign Tracking</h2>
+      </div>
+      <div class="top-details" id="repeatCampaignsTable"></div>
+    </section>
+
+    <!-- EXTRA INSIGHT CHARTS -->
+    <section class="insights-grid">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Top 10 Campaigns by Click Rate</h2>
+          <span class="chart-subtitle">Best CTR campaigns, minimum 50 delivered when available</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="topClickRateChart"></canvas>
+        </div>
+        <div class="top-details" id="topClickRateDetails"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Top 10 Campaigns by CTOR</h2>
+          <span class="chart-subtitle">Best conversion from opens to clicks</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="topCtorChart"></canvas>
+        </div>
+        <div class="top-details" id="topCtorDetails"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Sent Volume by Market</h2>
+          <span class="chart-subtitle">How total send volume is distributed by market</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="sentByMarketChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Click Rate by Market</h2>
+          <span class="chart-subtitle">Weighted Click Rate by market</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="clickRateByMarketChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Product Performance</h2>
+          <span class="chart-subtitle">Open Rate, Click Rate and CTOR by product</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="productPerformanceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Delivery Rate Over Time</h2>
+          <span class="chart-subtitle">Daily deliverability trend</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="deliveryRateTrendChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card chart-card-wide">
+        <div class="chart-header">
+          <h2 class="chart-title">Top 10 Campaigns by Efficiency Score</h2>
+          <span class="chart-subtitle">Score = Click Rate × 0.5 + CTOR × 0.3 + Open Rate × 0.2</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="efficiencyScoreChart"></canvas>
+        </div>
+        <div class="top-details" id="efficiencyScoreDetails"></div>
+      </div>
+    </section>
+
+    <!-- COMPARISON TABLE -->
+    <section class="table-section">
+      <div class="table-header">
+        <h2 class="chart-title">Company Comparison</h2>
+        <div class="table-controls">
+          <input type="text" id="tableSearch" class="table-search" placeholder="Search templates…" />
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="data-table" id="companyTable">
+          <thead>
+            <tr>
+              <th class="sortable" data-col="template">Template Name <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="product">Product <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="market">Market <span class="sort-icon">↕</span></th>
+              <th class="sortable num" data-col="sent">Sent <span class="sort-icon">↕</span></th>
+              <th class="sortable num" data-col="delivered">Delivered <span class="sort-icon">↕</span></th>
+              <th class="sortable num" data-col="openRate">Open Rate <span class="sort-icon">↕</span></th>
+              <th class="sortable num" data-col="clickRate">Click Rate <span class="sort-icon">↕</span></th>
+              <th class="sortable num" data-col="ctor">CTOR <span class="sort-icon">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="table-footer" id="tableFooter"></div>
+    </section>
+
+  </main>
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
