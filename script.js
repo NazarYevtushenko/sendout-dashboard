@@ -1777,8 +1777,11 @@ function updateChannelSplitChart() {
 function renderCampaignRankTable(containerId, title, rows) {
   const container = document.getElementById(containerId);
   if (!container) return;
+  const isWorst = /worst/i.test(title);
+  const topRows = rows.slice(0, 3);
 
   container.innerHTML = `
+    ${topRows.length ? renderCampaignRankPodium(topRows, title, isWorst) : ''}
     <table class="top-details-table">
       <thead><tr><th colspan="7">${escHtml(title)}</th></tr>
       <tr><th>Campaign</th><th>Product</th><th>Market</th><th class="num">Sent</th><th class="num">Delivered</th><th class="num">Click Rate</th><th class="num">CTOR</th></tr></thead>
@@ -1796,6 +1799,225 @@ function renderCampaignRankTable(containerId, title, rows) {
         `).join('') || '<tr><td colspan="7">No data matching current filters.</td></tr>'}
       </tbody>
     </table>
+  `;
+
+  container.querySelectorAll('[data-rank-export]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      exportCampaignRankImage(topRows, title, isWorst, btn.dataset.rankExport);
+    });
+  });
+}
+
+function renderCampaignRankPodium(rows, title, isWorst) {
+  return `
+    <div class="campaign-rank-board ${isWorst ? 'campaign-rank-board-worst' : 'campaign-rank-board-best'}">
+      <div class="campaign-rank-board-header">
+        <div>
+          <span class="campaign-rank-kicker">${escHtml(title)}</span>
+          <strong>${isWorst ? 'Bottom 3 campaigns' : 'Top 3 campaigns'}</strong>
+        </div>
+        <div class="campaign-rank-actions">
+          <button type="button" data-rank-export="copy">Copy image</button>
+          <button type="button" data-rank-export="download">Download PNG</button>
+        </div>
+      </div>
+      <div class="campaign-rank-podium">
+        ${rows.map((row, index) => `
+          <div class="campaign-rank-card campaign-rank-card-${index + 1}">
+            <div class="rank-medal rank-medal-${index + 1}" aria-hidden="true">
+              <span class="rank-medal-number">${index + 1}</span>
+            </div>
+            <div class="campaign-rank-copy">
+              <strong>${escHtml(row.template)}</strong>
+              <div class="campaign-rank-meta">
+                <span>${escHtml(row.product)}</span>
+                <span>${escHtml(row.market)}</span>
+                <span>${fmtNum(row.delivered)} delivered</span>
+              </div>
+            </div>
+            <div class="campaign-rank-metrics">
+              <span><small>CTR</small>${fmtPct(row.clickRate)}</span>
+              <span><small>CTOR</small>${fmtPct(row.ctor)}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function exportCampaignRankImage(rows, title, isWorst, action) {
+  const src = renderCampaignRankImage(rows, title, isWorst);
+  if (!src) {
+    showToast('Unable to export campaign ranking.');
+    return;
+  }
+
+  const blob = dataUrlToBlob(src);
+  const filename = `${title.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim() || 'Campaign Ranking'}.png`;
+
+  if (action === 'download' || !navigator.clipboard || typeof ClipboardItem === 'undefined') {
+    downloadBlob(blob, filename);
+    showToast(action === 'download' ? 'Ranking image downloaded.' : 'Clipboard image copy is unavailable, ranking image downloaded.');
+    return;
+  }
+
+  navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    .then(() => showToast('Ranking image copied to clipboard.'))
+    .catch(() => {
+      downloadBlob(blob, filename);
+      showToast('Clipboard blocked, ranking image downloaded as PNG.');
+    });
+}
+
+function renderCampaignRankImage(rows, title, isWorst) {
+  try {
+    const scale = 2;
+    const width = 1180;
+    const height = 610;
+    const canvas = document.createElement('canvas');
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = '#172033';
+    ctx.font = "800 28px 'DM Sans', sans-serif";
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(title.toUpperCase(), 46, 36);
+    ctx.strokeStyle = isWorst ? '#c08457' : '#dc2626';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(430, 52);
+    ctx.lineTo(width - 46, 52);
+    ctx.stroke();
+
+    const slots = [
+      { rank: 2, row: rows[1], x: 220, y: 160, h: 330 },
+      { rank: 1, row: rows[0], x: 590, y: 112, h: 378 },
+      { rank: 3, row: rows[2], x: 960, y: 176, h: 314 },
+    ].filter(slot => slot.row);
+
+    slots.forEach(slot => drawCampaignRankImageCard(ctx, slot, isWorst));
+
+    return canvas.toDataURL('image/png', 1);
+  } catch (e) {
+    console.error('Unable to render campaign ranking image', e);
+    return '';
+  }
+}
+
+function drawCampaignRankImageCard(ctx, slot, isWorst) {
+  const { rank, row, x, y, h } = slot;
+  const w = 290;
+  const cardX = x - w / 2;
+  const accent = rank === 1 ? '#dc2626' : rank === 2 ? '#9ca3af' : '#c08457';
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(15,23,42,.12)';
+  ctx.shadowBlur = 24;
+  ctx.shadowOffsetY = 10;
+  ctx.fillStyle = '#ffffff';
+  roundedRect(ctx, cardX, y, w, h, 14);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = hexToRgba(accent, rank === 1 ? .65 : .48);
+  ctx.lineWidth = rank === 1 ? 3 : 2;
+  roundedRect(ctx, cardX, y, w, h, 14);
+  ctx.stroke();
+
+  drawRankMedalCanvas(ctx, x, y + 54, rank);
+
+  ctx.fillStyle = '#172033';
+  ctx.font = "800 18px 'DM Sans', sans-serif";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  wrapCanvasTextCentered(ctx, shortLabel(row.template, 66), x, y + 118, w - 44, 21, 4);
+
+  ctx.strokeStyle = '#e6e3dd';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cardX + 26, y + h - 116);
+  ctx.lineTo(cardX + w - 26, y + h - 116);
+  ctx.stroke();
+
+  const metrics = [
+    ['CTR', fmtPct(row.clickRate)],
+    ['CTOR', fmtPct(row.ctor)],
+    ['Delivered', fmtNum(row.delivered)],
+  ];
+
+  metrics.forEach((metric, index) => {
+    const yy = y + h - 84 + index * 30;
+    ctx.fillStyle = '#6b7280';
+    ctx.font = "800 12px 'DM Sans', sans-serif";
+    ctx.textAlign = 'left';
+    ctx.fillText(metric[0], cardX + 30, yy);
+    ctx.fillStyle = isWorst ? '#c08457' : '#dc2626';
+    ctx.font = "800 19px 'DM Sans', sans-serif";
+    ctx.textAlign = 'right';
+    ctx.fillText(metric[1], cardX + w - 30, yy - 2);
+  });
+}
+
+function drawRankMedalCanvas(ctx, cx, cy, rank) {
+  const gradients = {
+    1: ['#fff8bd', '#facc15', '#d97706', '#92400e'],
+    2: ['#f8fafc', '#cbd5e1', '#94a3b8', '#64748b'],
+    3: ['#fed7aa', '#c08457', '#9a5b32', '#7c2d12'],
+  };
+  const colors = gradients[rank] || gradients[3];
+  const g = ctx.createRadialGradient(cx - 18, cy - 18, 8, cx, cy, 50);
+  g.addColorStop(0, colors[0]);
+  g.addColorStop(.34, colors[1]);
+  g.addColorStop(.74, colors[2]);
+  g.addColorStop(1, colors[3]);
+
+  ctx.save();
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(120,70,0,.35)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.9)';
+  ctx.font = "800 46px 'DM Sans', sans-serif";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,.22)';
+  ctx.shadowBlur = 4;
+  ctx.fillText(String(rank), cx, cy + 2);
+  ctx.restore();
+}
+
+function renderCampaignRankFeature(row, title, rank, isWorst) {
+  return `
+    <div class="campaign-rank-feature ${isWorst ? 'campaign-rank-feature-worst' : 'campaign-rank-feature-best'}">
+      <div class="rank-medal rank-medal-${rank}" aria-hidden="true">
+        <span class="rank-medal-number">${rank}</span>
+      </div>
+      <div class="campaign-rank-copy">
+        <span class="campaign-rank-kicker">${escHtml(title)}</span>
+        <strong>${escHtml(row.template)}</strong>
+        <div class="campaign-rank-meta">
+          <span>${escHtml(row.product)}</span>
+          <span>${escHtml(row.market)}</span>
+          <span>${fmtNum(row.delivered)} delivered</span>
+        </div>
+      </div>
+      <div class="campaign-rank-metrics">
+        <span><small>CTR</small>${fmtPct(row.clickRate)}</span>
+        <span><small>CTOR</small>${fmtPct(row.ctor)}</span>
+      </div>
+    </div>
   `;
 }
 
@@ -2963,6 +3185,9 @@ function initDatePicker() {
     mode: 'range',
     dateFormat: 'Y-m-d',
     allowInput: false,
+    locale: {
+      firstDayOfWeek: 1,
+    },
     onChange: selectedDates => {
       filterState.dateFrom = selectedDates[0] ? formatDate(selectedDates[0]) : null;
       filterState.dateTo = selectedDates[1] ? formatDate(selectedDates[1]) : null;

@@ -86,6 +86,7 @@
 - Filter selections persist in `localStorage` under `sendiq_filters_v1` and are restored on reload; selected values are pruned only if they no longer exist in the loaded data.
 - Mobile layout has a floating burger button that opens the sidebar as a drawer with an overlay.
 - Multi-select filter dropdowns stay open while checking/unchecking options, so several values can be selected in one pass.
+- Best/Worst Campaigns tables include separate CSS medal top-3 boards above each table, with Copy image and Download PNG actions for the ranking graphics; the calendar uses modern dark styling and starts weeks on Monday.
 
 ## Технические заметки
 
