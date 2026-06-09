@@ -2902,6 +2902,10 @@ function updateFilterField(field, values) {
 
 function initMultiSelects() {
   document.querySelectorAll('.multi-select').forEach(ms => {
+    ms.addEventListener('click', e => {
+      e.stopPropagation();
+    });
+
     ms.querySelector('.multi-select-trigger').addEventListener('click', e => {
       e.stopPropagation();
 

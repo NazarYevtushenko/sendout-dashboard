@@ -85,6 +85,7 @@
 
 - Filter selections persist in `localStorage` under `sendiq_filters_v1` and are restored on reload; selected values are pruned only if they no longer exist in the loaded data.
 - Mobile layout has a floating burger button that opens the sidebar as a drawer with an overlay.
+- Multi-select filter dropdowns stay open while checking/unchecking options, so several values can be selected in one pass.
 
 ## Технические заметки
 
