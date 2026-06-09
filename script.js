@@ -3730,7 +3730,7 @@ const DEMO_DATA = [
    KPI COPY
    ============================================================ */
 
-function copyKpiMetrics() {
+function copyKpiMetricsTextFallback() {
   const rows = [
     { label: 'Sent',                    id: 'kpiSent' },
     { label: 'Delivered',               id: 'kpiDelivered' },
@@ -3769,6 +3769,231 @@ function fallbackCopyText(text) {
     showToast('Copy failed — select and copy manually.');
   }
   document.body.removeChild(ta);
+}
+
+function copyKpiMetrics() {
+  const rows = getKpiCopyRows();
+  const text = buildKpiCopyText(rows);
+
+  const src = renderKpiMetricsImage(rows);
+  if (!src) {
+    fallbackCopyText(text);
+    return;
+  }
+
+  const blob = dataUrlToBlob(src);
+
+  if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+    downloadBlob(blob, 'SendIQ KPI Metrics.png');
+    showToast('Clipboard image copy is unavailable, metrics image downloaded as PNG.');
+    return;
+  }
+
+  navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    .then(() => showToast('Metrics image copied to clipboard.'))
+    .catch(() => {
+      downloadBlob(blob, 'SendIQ KPI Metrics.png');
+      showToast('Clipboard blocked, metrics image downloaded as PNG.');
+    });
+}
+
+function getKpiCopyRows() {
+  return [
+    { label: 'Sent', shortLabel: 'Sent', id: 'kpiSent', icon: 'mail' },
+    { label: 'Delivered', shortLabel: 'Delivered', id: 'kpiDelivered', icon: 'check' },
+    { label: 'Unique Opens', shortLabel: 'Unique Opens', id: 'kpiOpens', icon: 'eye' },
+    { label: 'Unique Clicks', shortLabel: 'Unique Clicks', id: 'kpiClicks', icon: 'cursor' },
+    { label: 'Delivery Rate', shortLabel: 'Delivery Rate', id: 'kpiDeliveryRate', icon: 'shield' },
+    { label: 'Open Rate', shortLabel: 'Open Rate', id: 'kpiOpenRate', icon: 'eye' },
+    { label: 'CTR (Click Rate)', shortLabel: 'CTR', note: '(Click Rate)', id: 'kpiClickRate', icon: 'chart' },
+    { label: 'CTOR (Click-to-Open Rate)', shortLabel: 'CTOR', note: '(Click-to-Open Rate)', id: 'kpiCtor', icon: 'target' },
+  ].map(row => ({
+    ...row,
+    value: document.getElementById(row.id)?.textContent?.trim() || '-',
+  }));
+}
+
+function buildKpiCopyText(rows) {
+  return 'Metric\tResult\n' + rows.map(r => `${r.label}\t${r.value}`).join('\n');
+}
+
+function renderKpiMetricsImage(rows) {
+  try {
+    const scale = 2;
+    const width = 820;
+    const headerH = 72;
+    const rowH = 66;
+    const pad = 28;
+    const height = pad + headerH + rows.length * rowH + pad;
+    const canvas = document.createElement('canvas');
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(15,23,42,.10)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 8;
+    ctx.fillStyle = '#ffffff';
+    roundedRect(ctx, pad, pad, width - pad * 2, height - pad * 2, 12);
+    ctx.fill();
+    ctx.restore();
+
+    const tableX = pad;
+    const tableW = width - pad * 2;
+    const tableY = pad;
+    const headerGradient = ctx.createLinearGradient(tableX, tableY, tableX + tableW, tableY);
+    headerGradient.addColorStop(0, '#b80000');
+    headerGradient.addColorStop(1, '#dc0000');
+    ctx.fillStyle = headerGradient;
+    roundedRect(ctx, tableX, tableY, tableW, 54, 8);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = "800 18px 'DM Sans', sans-serif";
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText('METRIC', tableX + 112, tableY + 27);
+    ctx.textAlign = 'right';
+    ctx.fillText('RESULT', tableX + tableW - 44, tableY + 27);
+
+    const bodyY = tableY + headerH;
+    rows.forEach((row, index) => {
+      const y = bodyY + index * rowH;
+
+      if (index === 4) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(tableX + 18, y - 8);
+        ctx.lineTo(tableX + tableW - 18, y - 8);
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = '#eee9e3';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tableX + 18, y + rowH - 4);
+      ctx.lineTo(tableX + tableW - 18, y + rowH - 4);
+      ctx.stroke();
+
+      drawKpiCopyIcon(ctx, row.icon, tableX + 58, y + 29);
+
+      ctx.fillStyle = '#111827';
+      ctx.font = "700 18px 'DM Sans', sans-serif";
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(row.shortLabel, tableX + 104, y + 29);
+
+      if (row.note) {
+        const labelW = ctx.measureText(row.shortLabel).width;
+        ctx.fillStyle = '#374151';
+        ctx.font = "500 12px 'DM Sans', sans-serif";
+        ctx.fillText(` ${row.note}`, tableX + 104 + labelW, y + 30);
+      }
+
+      ctx.fillStyle = '#c40000';
+      ctx.font = "800 24px 'DM Sans', sans-serif";
+      ctx.textAlign = 'right';
+      ctx.fillText(row.value, tableX + tableW - 44, y + 29);
+    });
+
+    return canvas.toDataURL('image/png', 1);
+  } catch (e) {
+    console.error('Unable to render KPI image', e);
+    return '';
+  }
+}
+
+function drawKpiCopyIcon(ctx, type, cx, cy) {
+  ctx.save();
+  ctx.strokeStyle = '#dc2626';
+  ctx.fillStyle = 'rgba(220,38,38,.08)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (type === 'mail') {
+    roundedRect(ctx, cx - 12, cy - 8, 24, 16, 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 12, cy - 7);
+    ctx.lineTo(cx, cy + 2);
+    ctx.lineTo(cx + 12, cy - 7);
+    ctx.stroke();
+  } else if (type === 'check') {
+    roundedRect(ctx, cx - 10, cy - 11, 20, 22, 3);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, cy);
+    ctx.lineTo(cx - 1, cy + 5);
+    ctx.lineTo(cx + 7, cy - 6);
+    ctx.stroke();
+  } else if (type === 'eye') {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 14, 8, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'cursor') {
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, cy - 12);
+    ctx.lineTo(cx + 8, cy + 1);
+    ctx.lineTo(cx + 1, cy + 3);
+    ctx.lineTo(cx + 6, cy + 12);
+    ctx.lineTo(cx + 2, cy + 14);
+    ctx.lineTo(cx - 3, cy + 5);
+    ctx.lineTo(cx - 9, cy + 10);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (type === 'shield') {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 13);
+    ctx.lineTo(cx + 11, cy - 8);
+    ctx.lineTo(cx + 9, cy + 7);
+    ctx.lineTo(cx, cy + 14);
+    ctx.lineTo(cx - 9, cy + 7);
+    ctx.lineTo(cx - 11, cy - 8);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, cy);
+    ctx.lineTo(cx - 1, cy + 4);
+    ctx.lineTo(cx + 6, cy - 6);
+    ctx.stroke();
+  } else if (type === 'chart') {
+    ctx.beginPath();
+    ctx.moveTo(cx - 11, cy + 10);
+    ctx.lineTo(cx - 11, cy + 2);
+    ctx.moveTo(cx - 2, cy + 10);
+    ctx.lineTo(cx - 2, cy - 5);
+    ctx.moveTo(cx + 7, cy + 10);
+    ctx.lineTo(cx + 7, cy - 12);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+    ctx.moveTo(cx + 18, cy);
+    ctx.lineTo(cx + 8, cy);
+    ctx.moveTo(cx - 18, cy);
+    ctx.lineTo(cx - 8, cy);
+    ctx.moveTo(cx, cy + 18);
+    ctx.lineTo(cx, cy + 8);
+    ctx.moveTo(cx, cy - 18);
+    ctx.lineTo(cx, cy - 8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 /* ============================================================

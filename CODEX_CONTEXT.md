@@ -61,6 +61,7 @@
 - Weekly/WoW comparison charts use compact caption chips below the chart instead of noisy labels on chart lines.
 - Canvas charts have actions to enlarge the chart and copy it as a PNG image; if clipboard access is blocked, PNG download is used as fallback.
 - Chart copy/zoom uses a composed high-resolution PNG with chart title/subtitle and a white background; DOC/PPTX export uses high-resolution chart images without duplicating titles inside the image.
+- KPI metrics copy uses a high-resolution PNG table image; text TSV copy is only a fallback when image clipboard access is unavailable.
 - `Week-over-week Change` is a custom canvas table with rows for Delivery Rate, Open Rate, Click Rate and CTOR, showing Start value, End value, Range pp change from first selected week to last selected week, a sparkline and a mini weekly pp-change table using week numbers (`W18`, `W19`, etc.). The first visible week is shown as a `0.0` baseline cell; subsequent cells show week-to-week pp deltas. Volume deltas like `Sent %`/`Delivered %` stay hidden because they can reach thousands of percent.
 - A small disclaimer under `Week-over-week Change` explains that Start/End are total weighted averages for the selected range, while weekly cells show week-to-week pp changes.
 - Campaign group charts keep semantic groups like Underperforming MTD, Risk of Churn, Retention and Reactivation. `VIP`/`CRM` are handled by a separate Audience filter, not as campaign groups.
