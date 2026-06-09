@@ -18,6 +18,13 @@
 </head>
 <body>
 
+  <button class="mobile-sidebar-toggle" id="mobileSidebarToggle" type="button" aria-label="Open filters" aria-controls="sidebar" aria-expanded="false">
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
   <!-- ============================================================
        SIDEBAR
   ============================================================ -->
@@ -76,6 +83,17 @@
       </div>
 
       <div class="filter-group">
+        <label class="filter-label">Audience</label>
+        <div class="multi-select" id="audienceSelect" data-field="audience">
+          <div class="multi-select-trigger">
+            <span class="ms-label">All Audiences</span>
+            <span class="ms-arrow">â–¾</span>
+          </div>
+          <div class="multi-select-dropdown"></div>
+        </div>
+      </div>
+
+      <div class="filter-group">
         <label class="filter-label">Template (Company)</label>
         <div class="multi-select" id="templateSelect" data-field="template">
           <div class="multi-select-trigger">
@@ -125,12 +143,15 @@
       </div>
     </header>
 
+    <!-- SUMMARY PANELS -->
+    <section class="summary-panels">
+
     <!-- KPI CARDS -->
-    <section class="kpi-grid">
+    <section class="kpi-grid kpi-metrics-table">
       <div class="kpi-card" data-metric="sent">
         <div class="kpi-icon">✉</div>
         <div class="kpi-body">
-          <span class="kpi-label">Total Sent</span>
+          <span class="kpi-label">Sent</span>
           <span class="kpi-value" id="kpiSent">—</span>
         </div>
       </div>
@@ -138,12 +159,28 @@
       <div class="kpi-card" data-metric="delivered">
         <div class="kpi-icon">✔</div>
         <div class="kpi-body">
-          <span class="kpi-label">Total Delivered</span>
+          <span class="kpi-label">Delivered</span>
           <span class="kpi-value" id="kpiDelivered">—</span>
         </div>
       </div>
 
-      <div class="kpi-card" data-metric="delivery-rate">
+      <div class="kpi-card" data-metric="opens">
+        <div class="kpi-icon">OR</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Unique Opens</span>
+          <span class="kpi-value" id="kpiOpens">-</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" data-metric="clicks">
+        <div class="kpi-icon">CR</div>
+        <div class="kpi-body">
+          <span class="kpi-label">Unique Clicks</span>
+          <span class="kpi-value" id="kpiClicks">-</span>
+        </div>
+      </div>
+
+      <div class="kpi-card kpi-divider" data-metric="delivery-rate">
         <div class="kpi-icon">⚡</div>
         <div class="kpi-body">
           <span class="kpi-label">Delivery Rate</span>
@@ -162,7 +199,7 @@
       <div class="kpi-card" data-metric="click-rate">
         <div class="kpi-icon">🖱</div>
         <div class="kpi-body">
-          <span class="kpi-label">Click Rate</span>
+          <span class="kpi-label">CTR <span class="metric-note">(Click Rate)</span></span>
           <span class="kpi-value" id="kpiClickRate">—</span>
         </div>
       </div>
@@ -170,55 +207,55 @@
       <div class="kpi-card" data-metric="ctor">
         <div class="kpi-icon">🎯</div>
         <div class="kpi-body">
-          <span class="kpi-label">CTOR</span>
+          <span class="kpi-label">CTOR <span class="metric-note">(Click-to-Open Rate)</span></span>
           <span class="kpi-value" id="kpiCtor">—</span>
         </div>
       </div>
+
+      <div class="kpi-copy-row">
+        <button type="button" class="kpi-copy-btn" id="copyKpiBtn">Copy metrics</button>
+      </div>
+    </section>
+
+      <div class="chart-card chart-card-funnel">
+        <div class="chart-header">
+          <h2 class="chart-title">Conversion Funnel</h2>
+          <span class="chart-subtitle">Main channel metrics</span>
+        </div>
+        <div class="chart-body chart-body-funnel">
+          <canvas id="funnelChart"></canvas>
+        </div>
+      </div>
+
     </section>
 
     <!-- MAIN CHARTS ROW -->
     <section class="charts-grid">
       <div class="chart-card">
         <div class="chart-header">
-          <h2 class="chart-title">Conversion Funnel</h2>
-          <span class="chart-subtitle">Absolute volumes</span>
-        </div>
-        <div class="chart-body">
-          <canvas id="funnelChart"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-header">
           <h2 class="chart-title">Daily Performance</h2>
-          <span class="chart-subtitle">Open Rate & Click Rate over time</span>
+          <span class="chart-subtitle">Open Rate, Click Rate & CTOR over time</span>
         </div>
         <div class="chart-body">
           <canvas id="trendChart"></canvas>
         </div>
       </div>
-    </section>
 
-    <section class="chart-card chart-card-full">
-      <div class="chart-header">
-        <h2 class="chart-title">Weekly KPI Comparison</h2>
-        <span class="chart-subtitle">Total Sent, Delivered and rates by week</span>
-      </div>
-      <div class="chart-body chart-body-tall">
-        <canvas id="weeklyComparisonChart"></canvas>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Week-over-week Change</h2>
+          <span class="chart-subtitle">Latest rates, range change, sparkline and weekly change table</span>
+        </div>
+        <div class="chart-body chart-body-wow">
+          <canvas id="wowChangeChart"></canvas>
+        </div>
+        <p class="chart-disclaimer">
+          Start and End values are total weighted averages for the selected range. Weekly cells show week-to-week pp changes, so they may not equal the full Range pp directly.
+        </p>
       </div>
     </section>
 
     <section class="insights-grid">
-      <div class="chart-card">
-        <div class="chart-header">
-          <h2 class="chart-title">Week-over-week Change</h2>
-          <span class="chart-subtitle">Rate and volume movement compared to previous week</span>
-        </div>
-        <div class="chart-body chart-body-tall">
-          <canvas id="wowChangeChart"></canvas>
-        </div>
-      </div>
 
       <div class="chart-card">
         <div class="chart-header">
@@ -230,8 +267,18 @@
 
       <div class="chart-card">
         <div class="chart-header">
-          <h2 class="chart-title">Campaign Size vs Performance</h2>
-          <span class="chart-subtitle">Sent volume compared with Click Rate</span>
+          <h2 class="chart-title">Product Performance</h2>
+          <span class="chart-subtitle">Open Rate, Click Rate and CTOR by product</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="productPerformanceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">Volume vs Engagement (By Campaign)</h2>
+          <span class="chart-subtitle">Total delivered compared with CTOR</span>
         </div>
         <div class="chart-body chart-body-tall">
           <canvas id="sizePerformanceChart"></canvas>
@@ -245,6 +292,26 @@
         </div>
         <div class="chart-body chart-body-tall">
           <canvas id="channelSplitChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card chart-card-wide">
+        <div class="chart-header">
+          <h2 class="chart-title">Top 3 Campaigns by Overall Performance</h2>
+          <span class="chart-subtitle">Best campaigns by combined Open Rate, Click Rate and CTOR</span>
+        </div>
+        <div class="chart-body chart-body-podium">
+          <canvas id="topOverallCampaignsChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card chart-card-wide">
+        <div class="chart-header">
+          <h2 class="chart-title">Performance by Campaign Group (Average)</h2>
+          <span class="chart-subtitle">Open Rate, Click Rate and CTOR by campaign group</span>
+        </div>
+        <div class="chart-body chart-body-tall">
+          <canvas id="campaignGroupPerformanceChart"></canvas>
         </div>
       </div>
     </section>
@@ -307,16 +374,6 @@
         </div>
         <div class="chart-body">
           <canvas id="clickRateByMarketChart"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-header">
-          <h2 class="chart-title">Product Performance</h2>
-          <span class="chart-subtitle">Open Rate, Click Rate and CTOR by product</span>
-        </div>
-        <div class="chart-body">
-          <canvas id="productPerformanceChart"></canvas>
         </div>
       </div>
 
