@@ -1320,6 +1320,13 @@ function updateCampaignGroupPerformanceChart() {
     .map(r => ({ ...r, campaignGroup: inferCampaignGroup(r.template) }));
   const grouped = getGroupedPerformanceByCampaignGroup(rows);
   const labels = grouped.map(r => r.campaignGroup);
+  const rateScaleMax = Math.max(
+    40,
+    Math.ceil(Math.max(
+      0,
+      ...grouped.flatMap(r => [r.openRate, r.clickRate, r.ctor].filter(v => typeof v === 'number' && isFinite(v)))
+    ) * 1.22 / 10) * 10
+  );
 
   const data = {
     labels,
@@ -1381,15 +1388,16 @@ function updateCampaignGroupPerformanceChart() {
       },
       rate: {
         beginAtZero: true,
-        suggestedMax: Math.max(
-          40,
-          Math.ceil(Math.max(
-            0,
-            ...grouped.flatMap(r => [r.openRate, r.clickRate, r.ctor].filter(v => typeof v === 'number' && isFinite(v)))
-          ) * 1.22 / 10) * 10
-        ),
+        suggestedMax: rateScaleMax,
         position: 'left',
         grid: { color: '#eee9e3' },
+        ticks: { callback: v => v + '%', font: { family: "'IBM Plex Mono'", size: 10 } },
+      },
+      rateRight: {
+        beginAtZero: true,
+        suggestedMax: rateScaleMax,
+        position: 'right',
+        grid: { drawOnChartArea: false },
         ticks: { callback: v => v + '%', font: { family: "'IBM Plex Mono'", size: 10 } },
       },
     },
@@ -1412,11 +1420,8 @@ function updateTopOverallCampaignsChart() {
   const canvas = document.getElementById('topOverallCampaignsChart');
   if (!canvas) return;
 
-  const rows = limitTop(
-    withMinimumDelivered(getGroupedPerformance(filteredRecords, ['template', 'product', 'market'])),
-    'efficiencyScore',
-    3
-  );
+  const grouped = getGroupedPerformance(filteredRecords, ['template', 'product', 'market']);
+  const rows = limitTop(grouped, 'efficiencyScore', 3);
 
   topOverallCampaignsChart = rows;
   drawTopOverallCampaignsCanvas(canvas, rows);
@@ -2022,7 +2027,7 @@ function renderCampaignRankFeature(row, title, rank, isWorst) {
 }
 
 function updateBestWorstCampaigns() {
-  const rows = withMinimumDelivered(getGroupedPerformance(filteredRecords, ['template', 'product', 'market']))
+  const rows = getGroupedPerformance(filteredRecords, ['template', 'product', 'market'])
     .filter(r => typeof r.clickRate === 'number' && isFinite(r.clickRate));
   const sorted = [...rows].sort((a, b) => b.clickRate - a.clickRate);
 
@@ -2192,6 +2197,11 @@ function calculateEfficiencyScore(g) {
 function withMinimumDelivered(rows) {
   const filtered = rows.filter(r => r.delivered >= MIN_DELIVERED_FOR_RATE_CHARTS);
   return filtered.length ? filtered : rows;
+}
+
+function withMinimumDeliveredForCount(rows, count) {
+  const filtered = rows.filter(r => r.delivered >= MIN_DELIVERED_FOR_RATE_CHARTS);
+  return filtered.length >= count ? filtered : rows;
 }
 
 function limitTop(rows, metric, count = 10) {

@@ -87,7 +87,10 @@
 - Mobile layout has a floating burger button that opens the sidebar as a drawer with an overlay.
 - Multi-select filter dropdowns stay open while checking/unchecking options, so several values can be selected in one pass.
 - Best/Worst Campaigns tables include separate CSS medal top-3 boards above each table, with Copy image and Download PNG actions for the ranking graphics; the calendar uses modern dark styling and starts weeks on Monday.
+- Best/Worst Campaigns do not apply the 50 delivered threshold; they rank the currently filtered campaign set directly by Click Rate.
 - Campaign Group Performance value labels use collision-aware placement with a subtle white background so close percentages do not overlap.
+- Campaign Group Performance uses one shared percentage scale for all metrics, mirrored on the right side for readability.
+- Top 3 Overall Campaigns does not apply the 50 delivered threshold; it ranks the currently filtered campaign set directly by efficiency score so filtered low-volume VIP campaigns can appear in the podium.
 
 ## Технические заметки
 
