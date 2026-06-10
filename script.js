@@ -1372,7 +1372,7 @@ function updateCampaignGroupPerformanceChart() {
       },
     },
     layout: {
-      padding: { top: 18, right: 10 },
+      padding: { top: 24, right: 10 },
     },
     scales: {
       x: {
@@ -1386,7 +1386,7 @@ function updateCampaignGroupPerformanceChart() {
           Math.ceil(Math.max(
             0,
             ...grouped.flatMap(r => [r.openRate, r.clickRate, r.ctor].filter(v => typeof v === 'number' && isFinite(v)))
-          ) * 1.16 / 10) * 10
+          ) * 1.22 / 10) * 10
         ),
         position: 'left',
         grid: { color: '#eee9e3' },
@@ -2490,28 +2490,58 @@ const campaignGroupValueLabelsPlugin = {
   id: 'campaignGroupValueLabels',
   afterDatasetsDraw(chart) {
     const { ctx, chartArea } = chart;
+    const placed = [];
     ctx.save();
     ctx.font = "700 10px 'IBM Plex Mono', monospace";
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
+    ctx.textBaseline = 'middle';
 
     chart.data.datasets.forEach((dataset, datasetIndex) => {
       const meta = chart.getDatasetMeta(datasetIndex);
       if (!meta || meta.hidden) return;
-      ctx.fillStyle = dataset.type === 'line' ? '#6b6660' : '#dc2626';
+      const textColor = dataset.type === 'line' ? '#6b6660' : '#dc2626';
 
       meta.data.forEach((element, index) => {
         const value = dataset.data[index];
         if (typeof value !== 'number' || !isFinite(value)) return;
-        const offset = dataset.type === 'line' ? 10 : 7;
-        const y = Math.max((chartArea?.top || 0) + 12, element.y - offset);
-        ctx.fillText(fmtPct(value), element.x, y);
+        const label = fmtPct(value);
+        const labelW = ctx.measureText(label).width + 8;
+        const labelH = 14;
+        const minY = (chartArea?.top || 0) + 8;
+        let y = Math.max(minY, element.y - (dataset.type === 'line' ? 24 : 9));
+        let box = {
+          left: element.x - labelW / 2,
+          right: element.x + labelW / 2,
+          top: y - labelH / 2,
+          bottom: y + labelH / 2,
+        };
+
+        while (placed.some(prev => boxesOverlap(box, prev)) && y - labelH > minY) {
+          y -= labelH + 2;
+          box = {
+            left: element.x - labelW / 2,
+            right: element.x + labelW / 2,
+            top: y - labelH / 2,
+            bottom: y + labelH / 2,
+          };
+        }
+
+        ctx.fillStyle = 'rgba(255,255,255,.78)';
+        roundedRect(ctx, box.left - 2, box.top, labelW + 4, labelH, 4);
+        ctx.fill();
+        ctx.fillStyle = textColor;
+        ctx.fillText(label, element.x, y + 0.5);
+        placed.push(box);
       });
     });
 
     ctx.restore();
   },
 };
+
+function boxesOverlap(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
 
 function roundedRect(ctx, x, y, w, h, radius) {
   ctx.beginPath();
