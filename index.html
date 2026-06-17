@@ -277,6 +277,16 @@
 
       <div class="chart-card">
         <div class="chart-header">
+          <h2 class="chart-title">Sendout Volume by Product</h2>
+          <span class="chart-subtitle">Share of total send volume by product</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="sentByProductChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
           <h2 class="chart-title">Volume vs Engagement (By Campaign)</h2>
           <span class="chart-subtitle">Total delivered compared with CTOR</span>
         </div>
@@ -302,6 +312,16 @@
         </div>
         <div class="chart-body chart-body-podium">
           <canvas id="topOverallCampaignsChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card chart-card-wide">
+        <div class="chart-header">
+          <h2 class="chart-title">Last Flop 3 Campaigns by Overall Performance</h2>
+          <span class="chart-subtitle">Lowest campaigns by combined Open Rate, Click Rate and CTOR</span>
+        </div>
+        <div class="chart-body chart-body-podium">
+          <canvas id="flopOverallCampaignsChart"></canvas>
         </div>
       </div>
 
@@ -387,14 +407,8 @@
         </div>
       </div>
 
-      <div class="chart-card chart-card-wide">
-        <div class="chart-header">
-          <h2 class="chart-title">Top 10 Campaigns by Efficiency Score</h2>
-          <span class="chart-subtitle">Score = Click Rate × 0.5 + CTOR × 0.3 + Open Rate × 0.2</span>
-        </div>
-        <div class="chart-body chart-body-tall">
-          <canvas id="efficiencyScoreChart"></canvas>
-        </div>
+      <div class="chart-card chart-card-wide chart-card-no-pad">
+        <div id="efficiencyScorePodium"></div>
         <div class="top-details" id="efficiencyScoreDetails"></div>
       </div>
     </section>

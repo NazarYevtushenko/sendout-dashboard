@@ -109,15 +109,7 @@ function normaliseRow(rawRow, headerMap) {
     if (value === null || value === undefined || String(value).trim() === '') continue;
 
     if (canon === 'date') {
-      if (value instanceof Date) {
-        rec.date = formatDate(value);
-      } else if (typeof value === 'number') {
-        const jsDate = excelSerialToDate(value);
-        rec.date = formatDate(jsDate);
-      } else {
-        const str = String(value).trim();
-        rec.date = str.includes('T') ? str.split('T')[0] : str;
-      }
+      rec.date = normaliseDateValue(value);
     } else if (['sent', 'delivered', 'opens', 'clicks'].includes(canon)) {
       rec[canon] = parseNumber(value);
       if (canon === 'opens') rec.hasOpens = true;
@@ -251,6 +243,7 @@ function inferChannel(rawRow, rec) {
 }
 
 function inferStoredChannel(record) {
+  if (record.sourceSheetName && record.sourceSheetName.toLowerCase().includes('sms')) return 'SMS';
   const text = [record.template, record.product, record.market].filter(Boolean).join(' ').toLowerCase();
   return text.includes('sms') ? 'SMS' : 'Email';
 }
@@ -268,6 +261,29 @@ function formatDate(d) {
   return `${y}-${m}-${day}`;
 }
 
+function normaliseDateValue(value) {
+  if (value instanceof Date) return formatDate(value);
+  if (typeof value === 'number') return formatDate(excelSerialToDate(value));
+
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const clean = raw.includes('T') ? raw.split('T')[0] : raw;
+  const iso = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  const local = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (local) {
+    const [, d, m, y] = local;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  return clean;
+}
+
 function parseXlsxBuffer(buffer) {
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   return parseWorkbook(workbook);
@@ -283,6 +299,7 @@ function parseWorkbook(workbook) {
 
   workbook.SheetNames.forEach(sheetName => {
     const ws = workbook.Sheets[sheetName];
+    const sheetNameLower = sheetName.toLowerCase();
 
     const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: null });
     if (!rows.length) return;
@@ -296,7 +313,10 @@ function parseWorkbook(workbook) {
 
     rows.forEach(row => {
       const rec = normaliseRow(row, headerMap);
-      if (rec) allRecords.push(rec);
+      if (!rec) return;
+      rec.sourceSheetName = sheetName;
+      if (sheetNameLower.includes('sms')) rec.channel = 'SMS';
+      allRecords.push(rec);
     });
   });
 
@@ -317,7 +337,7 @@ function loadRecords() {
     const raw = localStorage.getItem(STORAGE_KEY);
     const records = raw ? JSON.parse(raw) : [];
     return Array.isArray(records)
-      ? records.map(r => ({ ...r, channel: inferStoredChannel(r) }))
+      ? records.map(r => ({ ...r, date: normaliseDateValue(r.date), channel: inferStoredChannel(r) }))
       : [];
   } catch {
     return [];
@@ -578,6 +598,7 @@ let wowChangeChart = null;
 let sizePerformanceChart = null;
 let channelSplitChart = null;
 let topOverallCampaignsChart = null;
+let flopOverallCampaignsChart = null;
 let campaignGroupPerformanceChart = null;
 let customCanvasResizeTimer = null;
 
@@ -883,10 +904,15 @@ function getWeeklyComparisonRows(records) {
     grouped[week].push(r);
   });
 
-  return Object.keys(grouped).sort().map(week => ({
-    week,
-    ...aggregate(grouped[week]),
-  }));
+  return Object.keys(grouped).sort().map(week => {
+    const weekRecords = grouped[week];
+    const campaignCount = new Set(weekRecords.map(r => r.template).filter(Boolean)).size;
+    return {
+      week,
+      campaignCount,
+      ...aggregate(weekRecords),
+    };
+  });
 }
 
 function updateWowChangeChart() {
@@ -903,10 +929,12 @@ function buildWowTableRows(weeks) {
   const latest = weeks[weeks.length - 1] || null;
   const first = weeks[0] || null;
   const metrics = [
-    { label: 'Delivery Rate', field: 'deliveryRate', color: '#2563eb' },
-    { label: 'Open Rate', field: 'openRate', color: '#f59e0b' },
-    { label: 'Click Rate', field: 'clickRate', color: '#f43f5e' },
-    { label: 'CTOR', field: 'ctor', color: '#8b5cf6' },
+    { label: 'Delivery Rate', field: 'deliveryRate', color: '#2563eb', formatter: 'pct' },
+    { label: 'Open Rate', field: 'openRate', color: '#f59e0b', formatter: 'pct' },
+    { label: 'Click Rate', field: 'clickRate', color: '#f43f5e', formatter: 'pct' },
+    { label: 'CTOR', field: 'ctor', color: '#8b5cf6', formatter: 'pct' },
+    { label: 'Campaigns', field: 'campaignCount', color: '#10b981', formatter: 'num' },
+    { label: 'Cust. Sent', field: 'totalSent', color: '#0ea5e9', formatter: 'num' },
   ];
 
   return metrics.map(metric => {
@@ -973,8 +1001,8 @@ function drawWowTableCanvas(canvas, rows) {
   ctx.fillStyle = '#172033';
   ctx.fillText('Start', startX, headerY);
   ctx.fillText('End', endX, headerY);
-  ctx.fillText('Range pp', changeX, headerY);
-  ctx.fillText('Rate Trend', trendX, headerY);
+  ctx.fillText('Range Δ', changeX, headerY);
+  ctx.fillText('Trend', trendX, headerY);
   drawWowChangeHeaders(ctx, rows[0]?.changes || [], trendX, headerY + 15, trendW);
 
   rows.forEach((row, index) => {
@@ -1001,14 +1029,16 @@ function drawWowTableCanvas(canvas, rows) {
 
     ctx.font = "700 15px 'DM Sans', sans-serif";
     ctx.fillStyle = '#172033';
-    ctx.fillText(fmtNullablePct(row.start), startX, midY + 3);
-    ctx.fillText(fmtNullablePct(row.current), endX, midY + 3);
+    const fmtVal = row.formatter === 'num' ? fmtNullableNum : fmtNullablePct;
+    const fmtChg = row.formatter === 'num' ? fmtCountChange : fmtPp;
+    ctx.fillText(fmtVal(row.start), startX, midY + 3);
+    ctx.fillText(fmtVal(row.current), endX, midY + 3);
 
     ctx.fillStyle = rateChangeColor(row.change);
-    ctx.fillText(fmtPp(row.change), changeX, midY + 3);
+    ctx.fillText(fmtChg(row.change), changeX, midY + 3);
 
     drawSparkline(ctx, row.trend, trendX, y + 6, trendW, Math.max(16, rowH * 0.38), row.color);
-    drawWowChangeCells(ctx, row.changes, trendX, y + rowH - 20, trendW, 16);
+    drawWowChangeCells(ctx, row.changes, trendX, y + rowH - 20, trendW, 16, row.formatter);
   });
 }
 
@@ -1022,7 +1052,7 @@ function drawWowChangeHeaders(ctx, changes, x, y, w) {
   });
 }
 
-function drawWowChangeCells(ctx, changes, x, y, w, h) {
+function drawWowChangeCells(ctx, changes, x, y, w, h, formatter = 'pct') {
   if (!changes.length) return;
   const cellW = w / changes.length;
   changes.forEach((item, index) => {
@@ -1031,7 +1061,8 @@ function drawWowChangeCells(ctx, changes, x, y, w, h) {
     ctx.fillRect(cx, y, Math.max(18, cellW - 4), h);
     ctx.font = "700 9px 'IBM Plex Mono', monospace";
     ctx.fillStyle = rateChangeColor(item.value);
-    ctx.fillText(fmtCompactPp(item.value), cx + 3, y + 11);
+    const text = formatter === 'num' ? fmtCompactCountChange(item.value) : fmtCompactPp(item.value);
+    ctx.fillText(text, cx + 3, y + 11);
   });
 }
 
@@ -1089,6 +1120,25 @@ function fmtCompactPp(value) {
   if (typeof value !== 'number' || !isFinite(value)) return 'n/a';
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(1)}`;
+}
+
+function fmtNullableNum(value) {
+  return typeof value === 'number' && isFinite(value) ? fmtNum(Math.round(value)) : 'n/a';
+}
+
+function fmtCountChange(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return 'n/a';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${fmtNum(Math.round(value))}`;
+}
+
+function fmtCompactCountChange(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return 'n/a';
+  const sign = value > 0 ? '+' : '';
+  const abs = Math.abs(value);
+  if (abs >= 10000) return `${sign}${(value / 1000).toFixed(0)}K`;
+  if (abs >= 1000) return `${sign}${(value / 1000).toFixed(1)}K`;
+  return `${sign}${Math.round(value)}`;
 }
 
 function rateChangeColor(value) {
@@ -1424,10 +1474,39 @@ function updateTopOverallCampaignsChart() {
   const rows = limitTop(grouped, 'efficiencyScore', 3);
 
   topOverallCampaignsChart = rows;
-  drawTopOverallCampaignsCanvas(canvas, rows);
+  drawOverallCampaignsPodiumCanvas(canvas, rows, {
+    title: 'TOP 3 CAMPAIGNS BY OVERALL PERFORMANCE',
+    variant: 'top',
+  });
+}
+
+function updateFlopOverallCampaignsChart() {
+  const canvas = document.getElementById('flopOverallCampaignsChart');
+  if (!canvas) return;
+
+  const grouped = getGroupedPerformance(filteredRecords, ['template', 'product', 'market']);
+  const rows = [...grouped]
+    .filter(r => typeof r.efficiencyScore === 'number' && isFinite(r.efficiencyScore))
+    .sort((a, b) => a.efficiencyScore - b.efficiencyScore)
+    .slice(0, 3);
+
+  flopOverallCampaignsChart = rows;
+  drawOverallCampaignsPodiumCanvas(canvas, rows, {
+    title: 'LAST FLOP 3 CAMPAIGNS BY OVERALL PERFORMANCE',
+    variant: 'flop',
+  });
 }
 
 function drawTopOverallCampaignsCanvas(canvas, rows) {
+  drawOverallCampaignsPodiumCanvas(canvas, rows, {
+    title: 'TOP 3 CAMPAIGNS BY OVERALL PERFORMANCE',
+    variant: 'top',
+  });
+}
+
+function drawOverallCampaignsPodiumCanvas(canvas, rows, config = {}) {
+  const title = config.title || 'TOP 3 CAMPAIGNS BY OVERALL PERFORMANCE';
+  const variant = config.variant || 'top';
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(480, Math.floor(rect.width || canvas.clientWidth || 780));
   const height = Math.max(340, Math.floor(rect.height || canvas.clientHeight || 400));
@@ -1447,11 +1526,11 @@ function drawTopOverallCampaignsCanvas(canvas, rows) {
   ctx.font = "800 12px 'DM Sans', sans-serif";
   ctx.fillStyle = '#172033';
   ctx.textAlign = 'left';
-  ctx.fillText('TOP 3 CAMPAIGNS BY OVERALL PERFORMANCE', 18, 18);
-  ctx.strokeStyle = '#dc2626';
+  ctx.fillText(title, 18, 18);
+  ctx.strokeStyle = variant === 'flop' ? '#c08457' : '#dc2626';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(Math.min(330, width * 0.48), 15);
+  ctx.moveTo(Math.min(variant === 'flop' ? 390 : 330, width * 0.48), 15);
   ctx.lineTo(width - 18, 15);
   ctx.stroke();
 
@@ -1465,20 +1544,34 @@ function drawTopOverallCampaignsCanvas(canvas, rows) {
   const cardW = Math.min(190, Math.max(148, width * 0.245));
   const pedestalBottom = height - 14;
 
+  const palette = variant === 'flop'
+    ? {
+        firstBorder: 'rgba(192,132,87,.72)',
+        firstPedestal: '#c08457',
+        firstGlow: 'rgba(192,132,87,.18)',
+        metric: '#c08457',
+      }
+    : {
+        firstBorder: 'rgba(220,38,38,.68)',
+        firstPedestal: '#dc2626',
+        firstGlow: 'rgba(220,38,38,.16)',
+        metric: '#dc2626',
+      };
+
   const slots = [
     { rank: 2, row: rows[1], xFrac: 0.22, cardY: Math.round(height * 0.205), cardH: Math.round(height * 0.555), pedestalH: Math.round(height * 0.105),
-      medalColor: '#a3aab6', ringColor: '#6b7280', borderColor: 'rgba(148,163,184,.72)', pedestalColor: '#a9b1bd', glowColor: 'rgba(148,163,184,.18)' },
+      medalColor: '#a3aab6', ringColor: '#6b7280', borderColor: 'rgba(148,163,184,.72)', pedestalColor: '#a9b1bd', glowColor: 'rgba(148,163,184,.18)', metricColor: palette.metric },
     { rank: 1, row: rows[0], xFrac: 0.50, cardY: Math.round(height * 0.075), cardH: Math.round(height * 0.645), pedestalH: Math.round(height * 0.145),
-      medalColor: '#facc15', ringColor: '#f59e0b', borderColor: 'rgba(220,38,38,.68)', pedestalColor: '#dc2626', glowColor: 'rgba(220,38,38,.16)' },
+      medalColor: '#facc15', ringColor: '#f59e0b', borderColor: palette.firstBorder, pedestalColor: palette.firstPedestal, glowColor: palette.firstGlow, metricColor: palette.metric },
     { rank: 3, row: rows[2], xFrac: 0.78, cardY: Math.round(height * 0.230), cardH: Math.round(height * 0.525), pedestalH: Math.round(height * 0.092),
-      medalColor: '#c08457', ringColor: '#92633b', borderColor: 'rgba(192,132,87,.62)', pedestalColor: '#c08457', glowColor: 'rgba(192,132,87,.16)' },
+      medalColor: '#c08457', ringColor: '#92633b', borderColor: 'rgba(192,132,87,.62)', pedestalColor: '#c08457', glowColor: 'rgba(192,132,87,.16)', metricColor: palette.metric },
   ].filter(s => s.row);
 
   slots.forEach(s => drawPodiumCard(ctx, { ...s, x: width * s.xFrac }, cardW, pedestalBottom));
 }
 
 function drawPodiumCard(ctx, slot, cardW, pedestalBottom) {
-  const { rank, row, x, cardY, cardH, pedestalH, medalColor, ringColor, borderColor, pedestalColor, glowColor } = slot;
+  const { rank, row, x, cardY, cardH, pedestalH, medalColor, ringColor, borderColor, pedestalColor, glowColor, metricColor } = slot;
   const cardX = x - cardW / 2;
 
   const pedestalY = pedestalBottom - pedestalH;
@@ -1585,12 +1678,12 @@ function drawPodiumCard(ctx, slot, cardW, pedestalBottom) {
   // Metric rows: OR / CTR / CTOR
   const metricRowH = Math.max(18, Math.round(metricPanelH * 0.255));
   const m1Y = metricPanelY + Math.round(metricPanelH * 0.245);
-  drawPodiumMetric(ctx, 'OR', row.openRate, cardX + 18, cardW - 36, m1Y, rank === 1);
-  drawPodiumMetric(ctx, 'CTR', row.clickRate, cardX + 18, cardW - 36, m1Y + metricRowH, rank === 1);
-  drawPodiumMetric(ctx, 'CTOR', row.ctor, cardX + 18, cardW - 36, m1Y + metricRowH * 2, rank === 1);
+  drawPodiumMetric(ctx, 'OR', row.openRate, cardX + 18, cardW - 36, m1Y, rank === 1, metricColor);
+  drawPodiumMetric(ctx, 'CTR', row.clickRate, cardX + 18, cardW - 36, m1Y + metricRowH, rank === 1, metricColor);
+  drawPodiumMetric(ctx, 'CTOR', row.ctor, cardX + 18, cardW - 36, m1Y + metricRowH * 2, rank === 1, metricColor);
 }
 
-function drawPodiumMetric(ctx, label, value, x, rowWidth, y, isWinner = false) {
+function drawPodiumMetric(ctx, label, value, x, rowWidth, y, isWinner = false, color = '#dc2626') {
   ctx.save();
   ctx.textBaseline = 'alphabetic';
   ctx.font = "700 10.5px 'DM Sans', sans-serif";
@@ -1598,7 +1691,7 @@ function drawPodiumMetric(ctx, label, value, x, rowWidth, y, isWinner = false) {
   ctx.textAlign = 'left';
   ctx.fillText(label, x, y);
   ctx.font = `800 ${isWinner ? 13.5 : 12.5}px 'DM Sans', sans-serif`;
-  ctx.fillStyle = isWinner ? '#dc2626' : '#ef4444';
+  ctx.fillStyle = isWinner ? color : hexToRgba(color, 0.82);
   ctx.textAlign = 'right';
   ctx.fillText(fmtPct(value), x + rowWidth, y);
   ctx.restore();
@@ -1813,6 +1906,50 @@ function renderCampaignRankTable(containerId, title, rows) {
   });
 }
 
+function rankProductIcon(product) {
+  const v = (product || '').toLowerCase();
+  if (v === 'sport') return '⚽';
+  if (v === 'casino') return '🎲';
+  if (v === 'poker') return '🃏';
+  if (v === 'app') return '📊';
+  return '';
+}
+
+function renderGaugeSvg(value, label, cardIndex) {
+  const pct = Math.min(Math.max(value || 0, 0), 100);
+  const r = 30, cx = 38, cy = 44;
+  const arcLen = Math.PI * r;
+  const fillLen = arcLen * pct / 100;
+  const isFirst = cardIndex === 0;
+
+  const [c1, c2] = label === 'CTOR'
+    ? (isFirst ? ['#facc15', '#f97316'] : ['#a78bfa', '#7c3aed'])
+    : ['#94a3b8', '#60a5fa'];
+
+  const gid = `crg-${label}-${cardIndex}`;
+  const sx = cx - r, ex = cx + r;
+
+  return `
+    <div class="campaign-gauge">
+      <div class="campaign-gauge-label">${label}</div>
+      <svg viewBox="0 0 76 50" width="76" height="50" aria-hidden="true">
+        <defs>
+          <linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="${c1}"/>
+            <stop offset="100%" stop-color="${c2}"/>
+          </linearGradient>
+        </defs>
+        <path d="M ${sx} ${cy} A ${r} ${r} 0 0 1 ${ex} ${cy}"
+          fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="6" stroke-linecap="round"/>
+        <path d="M ${sx} ${cy} A ${r} ${r} 0 0 1 ${ex} ${cy}"
+          fill="none" stroke="url(#${gid})" stroke-width="6" stroke-linecap="round"
+          stroke-dasharray="${fillLen.toFixed(1)} ${arcLen.toFixed(1)}"/>
+        <text x="${cx}" y="${cy - 7}" text-anchor="middle"
+          fill="white" font-family="'DM Sans',sans-serif" font-size="13" font-weight="800">${fmtPct(value)}</text>
+      </svg>
+    </div>`;
+}
+
 function renderCampaignRankPodium(rows, title, isWorst) {
   return `
     <div class="campaign-rank-board ${isWorst ? 'campaign-rank-board-worst' : 'campaign-rank-board-best'}">
@@ -1827,11 +1964,16 @@ function renderCampaignRankPodium(rows, title, isWorst) {
         </div>
       </div>
       <div class="campaign-rank-podium">
-        ${rows.map((row, index) => `
-          <div class="campaign-rank-card campaign-rank-card-${index + 1}">
-            <div class="rank-medal rank-medal-${index + 1}" aria-hidden="true">
-              <span class="rank-medal-number">${index + 1}</span>
+        ${rows.map((row, index) => {
+          const rank = index + 1;
+          const icon = rankProductIcon(row.product);
+          return `
+          <div class="campaign-rank-card campaign-rank-card-${rank}">
+            <div class="podium-rank-number podium-rank-number-${rank}" aria-hidden="true">
+              ${rank === 1 ? '<span class="podium-rank-star">★</span>' : ''}
+              <span>${rank}</span>
             </div>
+            ${icon ? `<span class="campaign-rank-product-icon" aria-hidden="true">${icon}</span>` : ''}
             <div class="campaign-rank-copy">
               <strong>${escHtml(row.template)}</strong>
               <div class="campaign-rank-meta">
@@ -1841,11 +1983,12 @@ function renderCampaignRankPodium(rows, title, isWorst) {
               </div>
             </div>
             <div class="campaign-rank-metrics">
-              <span><small>CTR</small>${fmtPct(row.clickRate)}</span>
-              <span><small>CTOR</small>${fmtPct(row.ctor)}</span>
+              ${renderGaugeSvg(row.clickRate, 'CTR', index)}
+              ${renderGaugeSvg(row.ctor, 'CTOR', index)}
             </div>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
+
       </div>
     </div>
   `;
@@ -1878,96 +2021,192 @@ function exportCampaignRankImage(rows, title, isWorst, action) {
 function renderCampaignRankImage(rows, title, isWorst) {
   try {
     const scale = 2;
-    const width = 1180;
-    const height = 610;
+    const W = 1180, H = 660;
     const canvas = document.createElement('canvas');
-    canvas.width = width * scale;
-    canvas.height = height * scale;
+    canvas.width = W * scale;
+    canvas.height = H * scale;
     const ctx = canvas.getContext('2d');
     ctx.scale(scale, scale);
 
+    // Dark gradient background
+    const bg = ctx.createLinearGradient(0, 0, W * 0.55, H);
+    bg.addColorStop(0,    isWorst ? '#1a0d07' : '#0d1b2e');
+    bg.addColorStop(0.55, isWorst ? '#2d1208' : '#102a4a');
+    bg.addColorStop(1,    isWorst ? '#1a0d07' : '#0d1b2e');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Dot grid
+    ctx.fillStyle = 'rgba(255,255,255,0.045)';
+    for (let gx = 14; gx < W; gx += 28)
+      for (let gy = 14; gy < H; gy += 28) {
+        ctx.beginPath(); ctx.arc(gx, gy, 1, 0, Math.PI * 2); ctx.fill();
+      }
+
+    // Header
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = "800 11px 'DM Sans', sans-serif";
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(title.toUpperCase(), 46, 26);
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
+    ctx.font = "800 22px 'DM Sans', sans-serif";
+    ctx.fillText(isWorst ? 'Bottom 3 campaigns' : 'Top 3 campaigns', 46, 44);
 
-    ctx.fillStyle = '#172033';
-    ctx.font = "800 28px 'DM Sans', sans-serif";
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(title.toUpperCase(), 46, 36);
-    ctx.strokeStyle = isWorst ? '#c08457' : '#dc2626';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(430, 52);
-    ctx.lineTo(width - 46, 52);
-    ctx.stroke();
-
+    // Cards, all bottoms aligned to y=640
+    const BOTTOM = 640;
     const slots = [
-      { rank: 2, row: rows[1], x: 220, y: 160, h: 330 },
-      { rank: 1, row: rows[0], x: 590, y: 112, h: 378 },
-      { rank: 3, row: rows[2], x: 960, y: 176, h: 314 },
-    ].filter(slot => slot.row);
-
-    slots.forEach(slot => drawCampaignRankImageCard(ctx, slot, isWorst));
+      { rank: 2, row: rows[1], cx: 228, cw: 272, ch: 280 },
+      { rank: 1, row: rows[0], cx: 590, cw: 292, ch: 330 },
+      { rank: 3, row: rows[2], cx: 952, cw: 272, ch: 270 },
+    ];
+    // Draw 2 & 3 first so rank-1 renders on top
+    [...slots].sort((a, b) => (a.rank === 1 ? 1 : -1))
+      .filter(s => s.row)
+      .forEach(s => crDrawCard(ctx, s.rank, s.row, s.cx - s.cw / 2, BOTTOM - s.ch, s.cw, s.ch));
 
     return canvas.toDataURL('image/png', 1);
   } catch (e) {
-    console.error('Unable to render campaign ranking image', e);
+    console.error('renderCampaignRankImage', e);
     return '';
   }
 }
 
-function drawCampaignRankImageCard(ctx, slot, isWorst) {
-  const { rank, row, x, y, h } = slot;
-  const w = 290;
-  const cardX = x - w / 2;
-  const accent = rank === 1 ? '#dc2626' : rank === 2 ? '#9ca3af' : '#c08457';
+function crDrawCard(ctx, rank, row, cardX, cardY, cardW, cardH) {
+  const midX = cardX + cardW / 2;
 
-  ctx.save();
-  ctx.shadowColor = 'rgba(15,23,42,.12)';
-  ctx.shadowBlur = 24;
-  ctx.shadowOffsetY = 10;
+  // Card fill + border
+  if (rank === 1) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(250,204,21,0.28)';
+    ctx.shadowBlur = 40;
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    roundedRect(ctx, cardX, cardY, cardW, cardH, 16); ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    roundedRect(ctx, cardX, cardY, cardW, cardH, 16); ctx.fill();
+  }
+  ctx.strokeStyle = rank === 1 ? 'rgba(250,204,21,0.65)'
+    : rank === 2 ? 'rgba(203,213,225,0.25)' : 'rgba(192,132,87,0.25)';
+  ctx.lineWidth = rank === 1 ? 1.5 : 1;
+  roundedRect(ctx, cardX, cardY, cardW, cardH, 16); ctx.stroke();
+
+  // Rank number + optional star above card
+  crDrawRankNumber(ctx, rank, midX, cardY);
+
+  // Clear any leftover filter state from crDrawRankNumber
+  ctx.filter = 'none';
+
+  // Campaign name
   ctx.fillStyle = '#ffffff';
-  roundedRect(ctx, cardX, y, w, h, 14);
-  ctx.fill();
+  ctx.font = "800 14px 'DM Sans', sans-serif";
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const nameLines = Math.min(3, Math.ceil(ctx.measureText(shortLabel(row.template, 54)).width / (cardW - 24) * 1.05) || 1);
+  wrapCanvasTextCentered(ctx, shortLabel(row.template, 54), midX, cardY + 18, cardW - 24, 17, 3);
+
+  // Chips — fixed distance below name top (always visible, not crowded by gauges)
+  const chipY = cardY + 18 + nameLines * 17 + 10;
+  crDrawChips(ctx, [row.product, row.market, `${fmtNum(row.delivered)} delivered`], midX, chipY);
+
+  // Gauge panels — fixed at bottom
+  const gTop = cardY + cardH - 100;
+  const gGap = 6, panW = (cardW - 28 - gGap) / 2, panH = 92;
+  crDrawGauge(ctx, row.clickRate, 'CTR',  cardX + 10,          gTop, panW, panH, rank, false);
+  crDrawGauge(ctx, row.ctor,      'CTOR', cardX + 18 + panW,   gTop, panW, panH, rank, true);
+}
+
+function crDrawRankNumber(ctx, rank, midX, cardY) {
+  const cfg = {
+    1: { size: 112, c0: '#fffde0', c1: '#facc15', c2: '#b45309', sh: 'rgba(250,204,21,0.65)', blur: 20 },
+    2: { size: 90,  c0: '#f0f4f8', c1: '#94a3b8', c2: '#475569', sh: 'rgba(100,116,139,0.6)',  blur: 10 },
+    3: { size: 90,  c0: '#fde8c8', c1: '#c08457', c2: '#7c2d12', sh: 'rgba(192,132,87,0.55)',  blur: 10 },
+  }[rank];
+
+  if (rank === 1) {
+    const sb = cardY - cfg.size - 8;
+    const sg = ctx.createLinearGradient(midX, sb - 30, midX, sb);
+    sg.addColorStop(0, cfg.c0); sg.addColorStop(0.5, cfg.c1); sg.addColorStop(1, cfg.c2);
+    ctx.save();
+    ctx.filter = 'drop-shadow(0 2px 14px rgba(250,204,21,0.8))';
+    ctx.fillStyle = sg; ctx.font = "900 34px 'DM Sans', sans-serif";
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('★', midX, sb);
+    ctx.restore();
+  }
+
+  const nb = cardY - 6;
+  const ng = ctx.createLinearGradient(midX, nb - cfg.size, midX, nb);
+  ng.addColorStop(0, cfg.c0);
+  ng.addColorStop(rank === 1 ? 0.38 : 0.45, cfg.c1);
+  ng.addColorStop(1, cfg.c2);
+  ctx.save();
+  ctx.filter = `drop-shadow(0 ${rank === 1 ? 4 : 3}px ${cfg.blur}px ${cfg.sh})`;
+  ctx.fillStyle = ng; ctx.font = `900 ${cfg.size}px 'DM Sans', sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText(String(rank), midX, nb);
   ctx.restore();
+}
 
-  ctx.strokeStyle = hexToRgba(accent, rank === 1 ? .65 : .48);
-  ctx.lineWidth = rank === 1 ? 3 : 2;
-  roundedRect(ctx, cardX, y, w, h, 14);
-  ctx.stroke();
+function crDrawChips(ctx, chips, centerX, y) {
+  ctx.save();
+  ctx.filter = 'none';
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
 
-  drawRankMedalCanvas(ctx, x, y + 54, rank);
+  const h = 20, padX = 10;
+  ctx.font = "700 11px 'DM Sans', sans-serif";
+  const ws = chips.map(c => ctx.measureText(c).width + padX * 2);
+  const total = ws.reduce((a, b) => a + b, 0) + (chips.length - 1) * 6;
+  let x = centerX - total / 2;
 
-  ctx.fillStyle = '#172033';
-  ctx.font = "800 18px 'DM Sans', sans-serif";
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  wrapCanvasTextCentered(ctx, shortLabel(row.template, 66), x, y + 118, w - 44, 21, 4);
-
-  ctx.strokeStyle = '#e6e3dd';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(cardX + 26, y + h - 116);
-  ctx.lineTo(cardX + w - 26, y + h - 116);
-  ctx.stroke();
-
-  const metrics = [
-    ['CTR', fmtPct(row.clickRate)],
-    ['CTOR', fmtPct(row.ctor)],
-    ['Delivered', fmtNum(row.delivered)],
-  ];
-
-  metrics.forEach((metric, index) => {
-    const yy = y + h - 84 + index * 30;
-    ctx.fillStyle = '#6b7280';
-    ctx.font = "800 12px 'DM Sans', sans-serif";
-    ctx.textAlign = 'left';
-    ctx.fillText(metric[0], cardX + 30, yy);
-    ctx.fillStyle = isWorst ? '#c08457' : '#dc2626';
-    ctx.font = "800 19px 'DM Sans', sans-serif";
-    ctx.textAlign = 'right';
-    ctx.fillText(metric[1], cardX + w - 30, yy - 2);
+  chips.forEach((chip, i) => {
+    const w = ws[i];
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    roundedRect(ctx, x, y, w, h, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 0.75;
+    roundedRect(ctx, x, y, w, h, 10);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(chip, x + w / 2, y + h / 2);
+    x += w + 6;
   });
+
+  ctx.restore();
+}
+
+function crDrawGauge(ctx, value, label, px, py, pw, ph, rank, isCtor) {
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 0.5;
+  roundedRect(ctx, px, py, pw, ph, 8); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = "800 9px 'DM Sans', sans-serif";
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText(label, px + pw / 2, py + 7);
+
+  const ax = px + pw / 2, ay = py + ph - 22, r = Math.min(pw / 2 - 6, 28);
+  const pct = Math.min(Math.max(value || 0, 0), 100);
+
+  // Background arc (upper semicircle, clockwise)
+  ctx.beginPath(); ctx.arc(ax, ay, r, Math.PI, 2 * Math.PI, false);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.stroke();
+
+  // Fill arc
+  if (pct > 0) {
+    const [c1, c2] = isCtor
+      ? (rank === 1 ? ['#facc15', '#f97316'] : ['#a78bfa', '#7c3aed'])
+      : ['#94a3b8', '#60a5fa'];
+    const ag = ctx.createLinearGradient(ax - r, ay, ax + r, ay);
+    ag.addColorStop(0, c1); ag.addColorStop(1, c2);
+    ctx.beginPath(); ctx.arc(ax, ay, r, Math.PI, Math.PI + Math.PI * pct / 100, false);
+    ctx.strokeStyle = ag; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.stroke();
+  }
+
+  ctx.fillStyle = '#ffffff'; ctx.font = "800 13px 'DM Sans', sans-serif";
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText(fmtPct(value), ax, ay - 4);
 }
 
 function drawRankMedalCanvas(ctx, cx, cy, rank) {
@@ -2027,7 +2266,7 @@ function renderCampaignRankFeature(row, title, rank, isWorst) {
 }
 
 function updateBestWorstCampaigns() {
-  const rows = getGroupedPerformance(filteredRecords, ['template', 'product', 'market'])
+  const rows = getGroupedPerformance(filteredRecords.filter(r => r.channel !== 'SMS'), ['template', 'product', 'market'])
     .filter(r => typeof r.clickRate === 'number' && isFinite(r.clickRate));
   const sorted = [...rows].sort((a, b) => b.clickRate - a.clickRate);
 
@@ -2105,6 +2344,7 @@ let topCtorChart = null;
 let sentByMarketChart = null;
 let clickRateByMarketChart = null;
 let productPerformanceChart = null;
+let sentByProductChart = null;
 let deliveryRateTrendChart = null;
 let efficiencyScoreChart = null;
 
@@ -2458,7 +2698,14 @@ const chartValueLabelsPlugin = {
         const value = dataset.data[index];
         if (typeof value !== 'number' || !isFinite(value)) return;
         const label = options.suffix === 'pp' ? `${value.toFixed(2)}%` : fmtPct(value);
-        ctx.fillText(label, element.x, element.y - 6);
+        const labelW = ctx.measureText(label).width + 8;
+        const labelH = 14;
+        const y = Math.max((chart.chartArea?.top || 0) + labelH / 2, element.y - 10);
+        ctx.fillStyle = 'rgba(255,255,255,.78)';
+        roundedRect(ctx, element.x - labelW / 2, y - labelH + 2, labelW, labelH, 4);
+        ctx.fill();
+        ctx.fillStyle = '#1c1a17';
+        ctx.fillText(label, element.x, y);
       });
     });
 
@@ -2810,6 +3057,9 @@ function updateClickRateByMarketChart() {
 function updateProductPerformanceChart() {
   const rows = getGroupedPerformance(filteredRecords, ['product'])
     .sort((a, b) => sortNumberDesc(a, b, 'sent'));
+  const options = baseBarOptions({ percent: true, showLegend: true });
+  options.layout = { padding: { top: 18 } };
+  options.plugins.chartValueLabels = { display: true };
 
   productPerformanceChart = renderOrUpdateChart(productPerformanceChart, 'productPerformanceChart', {
     type: 'bar',
@@ -2839,9 +3089,56 @@ function updateProductPerformanceChart() {
         },
       ],
     },
-    options: baseBarOptions({ percent: true, showLegend: true }),
+    options,
+    plugins: [chartValueLabelsPlugin],
   });
   renderChartCaption('productPerformanceChart', buildProductCaption(rows));
+}
+
+function updateSentByProductChart() {
+  const rows = getGroupedPerformance(filteredRecords, ['product'])
+    .sort((a, b) => b.sent - a.sent);
+
+  sentByProductChart = renderOrUpdateChart(sentByProductChart, 'sentByProductChart', {
+    type: 'doughnut',
+    data: {
+      labels: rows.map(r => r.product),
+      datasets: [{
+        label: 'Sent',
+        data: rows.map(r => Math.round(r.sent)),
+        backgroundColor: ['#3b82f6', '#00c8aa', '#f59e0b', '#8b5cf6', '#f43f5e', '#6b7280'],
+        borderColor: '#ffffff',
+        borderWidth: 2,
+        hoverOffset: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '64%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            boxWidth: 10,
+            usePointStyle: true,
+            font: { family: "'DM Sans'", size: 11 },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const total = ctx.dataset.data.reduce((sum, value) => sum + Number(value || 0), 0);
+              const value = Number(ctx.raw || 0);
+              const share = total ? (value / total * 100) : 0;
+              return ` ${ctx.label}: ${fmtNum(value)} (${share.toFixed(1)}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+  renderChartCaption('sentByProductChart', buildTopValueCaption(rows, 'product', 'sent', '#3b82f6', fmtNum));
 }
 
 function updateDeliveryRateTrendChart() {
@@ -2902,25 +3199,22 @@ function updateEfficiencyScoreChart() {
     'efficiencyScore'
   );
 
-  const fullLabels = rows.map(r => r.template);
-  const labels = rows.map(r => shortLabel(r.template));
+  const podiumEl = document.getElementById('efficiencyScorePodium');
+  if (podiumEl) {
+    const top3 = rows.slice(0, 3);
+    if (top3.length) {
+      podiumEl.innerHTML = renderCampaignRankPodium(top3, 'Best by Efficiency Score', false);
+      podiumEl.querySelectorAll('[data-rank-export]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          exportCampaignRankImage(top3, 'Best by Efficiency Score', false, btn.dataset.rankExport);
+        });
+      });
+    } else {
+      podiumEl.innerHTML = '';
+    }
+  }
 
-  efficiencyScoreChart = renderOrUpdateChart(efficiencyScoreChart, 'efficiencyScoreChart', {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Efficiency Score',
-        data: rows.map(r => +r.efficiencyScore.toFixed(2)),
-        backgroundColor: '#f43f5e',
-        borderRadius: 4,
-        borderSkipped: false,
-      }],
-    },
-    options: baseBarOptions({ horizontal: true, percent: false }),
-  }, fullLabels);
-
-  renderTopDetailsTable('efficiencyScoreDetails', rows, 'efficiencyScore', 'Score');
+  renderTopDetailsTable('efficiencyScoreDetails', rows.slice(3), 'efficiencyScore', 'Score');
 }
 
 function updateInsightCharts() {
@@ -2929,6 +3223,7 @@ function updateInsightCharts() {
   updateSizePerformanceChart();
   updateChannelSplitChart();
   updateTopOverallCampaignsChart();
+  updateFlopOverallCampaignsChart();
   updateBestWorstCampaigns();
   updateRepeatCampaignTracking();
   updateTopClickRateChart();
@@ -2936,6 +3231,7 @@ function updateInsightCharts() {
   updateSentByMarketChart();
   updateClickRateByMarketChart();
   updateProductPerformanceChart();
+  updateSentByProductChart();
   updateCampaignGroupPerformanceChart();
   updateDeliveryRateTrendChart();
   updateEfficiencyScoreChart();
@@ -3380,14 +3676,15 @@ function getExportChartImages() {
     ['sizePerformanceChart', 'Volume vs Engagement (By Campaign)'],
     ['channelSplitChart', 'Channel Split'],
     ['topOverallCampaignsChart', 'Top 3 Campaigns by Overall Performance'],
+    ['flopOverallCampaignsChart', 'Last Flop 3 Campaigns by Overall Performance'],
     ['campaignGroupPerformanceChart', 'Performance by Campaign Group'],
     ['topClickRateChart', 'Top 10 Campaigns by Click Rate'],
     ['topCtorChart', 'Top 10 Campaigns by CTOR'],
     ['sentByMarketChart', 'Sent Volume by Market'],
     ['clickRateByMarketChart', 'Click Rate by Market'],
     ['productPerformanceChart', 'Product Performance'],
+    ['sentByProductChart', 'Sendout Volume by Product'],
     ['deliveryRateTrendChart', 'Delivery Rate Over Time'],
-    ['efficiencyScoreChart', 'Efficiency Score'],
   ].map(([id, title]) => {
     const canvas = document.getElementById(id);
     if (!canvas) return null;
@@ -3412,7 +3709,7 @@ function exportDeepDiveDoc() {
   const summary = getExportSummary();
   const weeklyRows = getWeeklyComparisonRows(filteredRecords);
   const charts = getExportChartImages().filter(c =>
-    ['Volume vs Engagement (By Campaign)', 'Channel Split', 'Top 3 Campaigns by Overall Performance', 'Performance by Campaign Group', 'Top 10 Campaigns by Click Rate', 'Top 10 Campaigns by CTOR', 'Sent Volume by Market', 'Click Rate by Market'].includes(c.title)
+    ['Volume vs Engagement (By Campaign)', 'Channel Split', 'Top 3 Campaigns by Overall Performance', 'Last Flop 3 Campaigns by Overall Performance', 'Performance by Campaign Group', 'Top 10 Campaigns by Click Rate', 'Top 10 Campaigns by CTOR', 'Sent Volume by Market', 'Sendout Volume by Product', 'Click Rate by Market'].includes(c.title)
   );
   exportDocHtml('Campaign Deep Dive Report', summary, weeklyRows, charts);
 }
@@ -4372,6 +4669,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (topOverallCampaignsChart) {
         const canvas = document.getElementById('topOverallCampaignsChart');
         if (canvas) drawTopOverallCampaignsCanvas(canvas, topOverallCampaignsChart);
+      }
+      if (flopOverallCampaignsChart) {
+        const canvas = document.getElementById('flopOverallCampaignsChart');
+        if (canvas) drawOverallCampaignsPodiumCanvas(canvas, flopOverallCampaignsChart, {
+          title: 'LAST FLOP 3 CAMPAIGNS BY OVERALL PERFORMANCE',
+          variant: 'flop',
+        });
       }
     }, 120);
   });

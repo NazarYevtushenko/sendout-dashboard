@@ -91,6 +91,9 @@
 - Campaign Group Performance value labels use collision-aware placement with a subtle white background so close percentages do not overlap.
 - Campaign Group Performance uses one shared percentage scale for all metrics, mirrored on the right side for readability.
 - Top 3 Overall Campaigns does not apply the 50 delivered threshold; it ranks the currently filtered campaign set directly by efficiency score so filtered low-volume VIP campaigns can appear in the podium.
+- Added `Last Flop 3 Campaigns by Overall Performance`, a mirrored podium canvas that ranks the currently filtered campaign set by lowest efficiency score and is included in chart export/copy flows.
+- Added `Sendout Volume by Product` next to Product Performance as a donut chart, showing sent volume share by product and included in chart exports.
+- Product Performance displays percent value labels directly on the bars using `chartValueLabelsPlugin`.
 
 ## Технические заметки
 
