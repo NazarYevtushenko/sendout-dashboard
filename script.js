@@ -46,13 +46,13 @@ const COLUMN_MAP = {
   // Opens
   'unique opens': 'opens',
   'opens': 'opens',
-  'gross opens': 'opens',
+  'gross opens': 'grossOpens',
   'opened': 'opens',
 
   // Clicks
   'unique clicks': 'clicks',
   'clicks': 'clicks',
-  'gross clicks': 'clicks',
+  'gross clicks': 'grossClicks',
   'clicked': 'clicks',
   'sms - clicked': 'clicks',
 
@@ -79,7 +79,7 @@ const COLUMN_MAP = {
   'delivery r%': 'deliveryRate',
 };
 
-function normaliseRow(rawRow, headerMap) {
+function normaliseRow(rawRow, headerMap, formattedRow) {
   const rec = {
     date: null,
     template: null,
@@ -90,12 +90,16 @@ function normaliseRow(rawRow, headerMap) {
     delivered: 0,
     opens: 0,
     clicks: 0,
+    grossOpens: 0,
+    grossClicks: 0,
     openRate: null,
     clickRate: null,
     ctor: null,
     deliveryRate: null,
     hasOpens: false,
     hasClicks: false,
+    hasGrossOpens: false,
+    hasGrossClicks: false,
     hasOpenRate: false,
     hasClickRate: false,
     hasCtor: false,
@@ -106,16 +110,25 @@ function normaliseRow(rawRow, headerMap) {
     const canon = headerMap[key];
     if (!canon) continue;
 
+    // Remember that Gross columns exist even when a particular row is blank.
+    if (canon === 'grossOpens') rec.hasGrossOpens = true;
+    if (canon === 'grossClicks') rec.hasGrossClicks = true;
+
     if (value === null || value === undefined || String(value).trim() === '') continue;
 
     if (canon === 'date') {
       rec.date = normaliseDateValue(value);
-    } else if (['sent', 'delivered', 'opens', 'clicks'].includes(canon)) {
+    } else if (['sent', 'delivered', 'opens', 'clicks', 'grossOpens', 'grossClicks'].includes(canon)) {
       rec[canon] = parseNumber(value);
       if (canon === 'opens') rec.hasOpens = true;
       if (canon === 'clicks') rec.hasClicks = true;
     } else if (['openRate', 'clickRate', 'ctor', 'deliveryRate'].includes(canon)) {
-      const num = parseNumber(value);
+      const displayValue = formattedRow ? formattedRow[rawKey] : undefined;
+      const num = parseNumber(
+        displayValue !== null && displayValue !== undefined && String(displayValue).trim() !== ''
+          ? displayValue
+          : value
+      );
       rec[canon] = isNaN(num) ? null : num;
       if (canon === 'openRate') rec.hasOpenRate = true;
       if (canon === 'clickRate') rec.hasClickRate = true;
@@ -139,6 +152,17 @@ function normaliseRow(rawRow, headerMap) {
 
   if (!rec.product) rec.product = '(Unknown)';
   if (!rec.market) rec.market = '(Unknown)';
+
+  // Gross engagement is the primary basis for dashboard counts and rates.
+  // Files without Gross columns keep using their regular Opens/Clicks fields.
+  if (rec.hasGrossOpens) {
+    rec.opens = rec.grossOpens;
+    rec.hasOpens = true;
+  }
+  if (rec.hasGrossClicks) {
+    rec.clicks = rec.grossClicks;
+    rec.hasClicks = true;
+  }
 
   rec.product = normaliseProduct(rec.product);
   rec.market = normaliseMarket(rec.market);
@@ -304,6 +328,13 @@ function parseWorkbook(workbook) {
     const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: null });
     if (!rows.length) return;
 
+    // Formatted (display) values are used for rate columns so that cells
+    // formatted as percentages (e.g. "114.29%") are read from their
+    // displayed text instead of the underlying fraction (1.1428...), which
+    // is indistinguishable from an already-scaled percent value once it
+    // exceeds 1 (a legitimate case for CTOR, which can exceed 100%).
+    const rowsFormatted = XLSX.utils.sheet_to_json(ws, { raw: false, defval: null });
+
     const headerMap = {};
     Object.keys(rows[0]).forEach(rawKey => {
       const key = String(rawKey).trim().toLowerCase();
@@ -311,8 +342,8 @@ function parseWorkbook(workbook) {
       if (canon) headerMap[key] = canon;
     });
 
-    rows.forEach(row => {
-      const rec = normaliseRow(row, headerMap);
+    rows.forEach((row, i) => {
+      const rec = normaliseRow(row, headerMap, rowsFormatted[i]);
       if (!rec) return;
       rec.sourceSheetName = sheetName;
       if (sheetNameLower.includes('sms')) rec.channel = 'SMS';
@@ -542,12 +573,18 @@ function aggregate(records) {
   const totalClicks = records.reduce((s, r) => s + r.clicks, 0);
 
   const deliveryRate = totalSent ? (totalDelivered / totalSent) * 100 : 0;
-  const openRate = weightedAverageRate(records, 'openRate', 'delivered')
-    ?? (hasAny(records, 'hasOpens') && totalDelivered ? (totalOpens / totalDelivered) * 100 : null);
-  const clickRate = weightedAverageRate(records, 'clickRate', 'delivered')
-    ?? (hasAny(records, 'hasClicks') && totalDelivered ? (totalClicks / totalDelivered) * 100 : null);
-  const ctor = weightedAverageRate(records, 'ctor', 'opens')
-    ?? (hasAny(records, 'hasOpens') && hasAny(records, 'hasClicks') && totalOpens ? (totalClicks / totalOpens) * 100 : null);
+  // Aggregate count-based rates from the underlying totals. This avoids
+  // accumulating rounding errors from per-row percentage cells and keeps
+  // CTOR on the same unique-open / unique-click basis as the source data.
+  const openRate = hasAny(records, 'hasOpens') && totalDelivered
+    ? (totalOpens / totalDelivered) * 100
+    : weightedAverageRate(records, 'openRate', 'delivered');
+  const clickRate = hasAny(records, 'hasClicks') && totalDelivered
+    ? (totalClicks / totalDelivered) * 100
+    : weightedAverageRate(records, 'clickRate', 'delivered');
+  const ctor = hasAny(records, 'hasOpens') && hasAny(records, 'hasClicks') && totalOpens
+    ? (totalClicks / totalOpens) * 100
+    : weightedAverageRate(records, 'ctor', 'opens');
 
   return {
     totalSent,
@@ -640,8 +677,8 @@ function drawFunnelCanvas(canvas, values) {
   const stages = [
     { label: 'SENT', value: values.sent, rate: null, color: '#c40000' },
     { label: 'DELIVERED', value: values.delivered, rate: values.deliveryRate, color: '#df2020' },
-    { label: 'UNIQUE OPENS', value: values.opened, rate: values.openRate, color: '#f15b5b' },
-    { label: 'UNIQUE CLICKS', value: values.clicked, rate: values.clickRate, color: '#fb7b7b' },
+    { label: 'OPENS', value: values.opened, rate: values.openRate, color: '#f15b5b' },
+    { label: 'CLICKS', value: values.clicked, rate: values.clickRate, color: '#fb7b7b' },
   ];
 
   const titleW = Math.min(260, width * 0.42);
@@ -781,19 +818,19 @@ function updateTrendChart() {
 
   const openRates = dates.map(d => {
     const g = byDate[d];
-    const rate = g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : (g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : 0);
+    const rate = g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : (g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : 0);
     return +rate.toFixed(2);
   });
 
   const clickRates = dates.map(d => {
     const g = byDate[d];
-    const rate = g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : (g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : 0);
+    const rate = g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : (g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : 0);
     return +rate.toFixed(2);
   });
 
   const ctorRates = dates.map(d => {
     const g = byDate[d];
-    const rate = g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : (g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : 0);
+    const rate = g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : (g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : 0);
     return +rate.toFixed(2);
   });
 
@@ -1811,9 +1848,9 @@ function getGroupedPerformanceByCampaignGroup(rows) {
   return Object.values(grouped)
     .map(g => ({
       campaignGroup: g.campaignGroup,
-      openRate: g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : (g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : null),
-      clickRate: g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : (g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : null),
-      ctor: g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : (g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : null),
+      openRate: g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : (g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : null),
+      clickRate: g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : (g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : null),
+      ctor: g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : (g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : null),
     }))
     .sort((a, b) => priority.indexOf(a.campaignGroup) - priority.indexOf(b.campaignGroup));
 }
@@ -2242,27 +2279,42 @@ function drawRankMedalCanvas(ctx, cx, cy, rank) {
   ctx.restore();
 }
 
-function renderCampaignRankFeature(row, title, rank, isWorst) {
+function renderTopPerformingCampaignRow(row, rank) {
   return `
-    <div class="campaign-rank-feature ${isWorst ? 'campaign-rank-feature-worst' : 'campaign-rank-feature-best'}">
+    <div class="campaign-rank-feature">
       <div class="rank-medal rank-medal-${rank}" aria-hidden="true">
         <span class="rank-medal-number">${rank}</span>
       </div>
       <div class="campaign-rank-copy">
-        <span class="campaign-rank-kicker">${escHtml(title)}</span>
         <strong>${escHtml(row.template)}</strong>
         <div class="campaign-rank-meta">
-          <span>${escHtml(row.product)}</span>
-          <span>${escHtml(row.market)}</span>
-          <span>${fmtNum(row.delivered)} delivered</span>
+          <span>${escHtml(row.product || '(Unknown)')}</span>
+          <span>${escHtml(row.market || '(Unknown)')}</span>
+          <span>${fmtNum(row.sent)} sent</span>
         </div>
       </div>
-      <div class="campaign-rank-metrics">
+      <div class="top-performing-metrics">
+        <span><small>OR</small>${fmtPct(row.openRate)}</span>
         <span><small>CTR</small>${fmtPct(row.clickRate)}</span>
         <span><small>CTOR</small>${fmtPct(row.ctor)}</span>
       </div>
     </div>
   `;
+}
+
+function updateTopPerformingCampaignsChart() {
+  const container = document.getElementById('topPerformingCampaigns');
+  if (!container) return;
+
+  const rows = limitTop(
+    getGroupedPerformance(filteredRecords, ['template', 'product', 'market']),
+    'efficiencyScore',
+    3
+  );
+
+  container.innerHTML = rows.length
+    ? rows.map((row, index) => renderTopPerformingCampaignRow(row, index + 1)).join('')
+    : '<div class="empty-state"><p>No data matching current filters.</p></div>';
 }
 
 function updateBestWorstCampaigns() {
@@ -2417,9 +2469,9 @@ function getGroupedPerformance(records, groupFields) {
       firstDate: dates[0] || '',
       lastDate: dates[dates.length - 1] || '',
       sourceCount: sourceNames.length,
-      openRate: g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : (g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : null),
-      clickRate: g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : (g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : null),
-      ctor: g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : (g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : null),
+      openRate: g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : (g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : null),
+      clickRate: g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : (g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : null),
+      ctor: g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : (g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : null),
       deliveryRate: g.sent ? (g.delivered / g.sent * 100) : 0,
       efficiencyScore: calculateEfficiencyScore(g),
     };
@@ -2427,9 +2479,9 @@ function getGroupedPerformance(records, groupFields) {
 }
 
 function calculateEfficiencyScore(g) {
-  const openRate = g.openRate ?? (g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : (g.delivered ? (g.opens / g.delivered * 100) : 0));
-  const clickRate = g.clickRate ?? (g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : (g.delivered ? (g.clicks / g.delivered * 100) : 0));
-  const ctor = g.ctor ?? (g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : (g.opens ? (g.clicks / g.opens * 100) : 0));
+  const openRate = g.openRate ?? (g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : (g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : 0));
+  const clickRate = g.clickRate ?? (g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : (g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : 0));
+  const ctor = g.ctor ?? (g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : (g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : 0));
 
   return ((clickRate ?? 0) * 0.5) + ((ctor ?? 0) * 0.3) + ((openRate ?? 0) * 0.2);
 }
@@ -2448,6 +2500,13 @@ function limitTop(rows, metric, count = 10) {
   return [...rows]
     .filter(r => typeof r[metric] === 'number' && isFinite(r[metric]))
     .sort((a, b) => b[metric] - a[metric])
+    .slice(0, count);
+}
+
+function limitBottom(rows, metric, count = 10) {
+  return [...rows]
+    .filter(r => typeof r[metric] === 'number' && isFinite(r[metric]))
+    .sort((a, b) => a[metric] - b[metric])
     .slice(0, count);
 }
 
@@ -3195,7 +3254,7 @@ function updateDeliveryRateTrendChart() {
 
 function updateEfficiencyScoreChart() {
   const rows = limitTop(
-    withMinimumDelivered(getGroupedPerformance(filteredRecords, ['template', 'product', 'market'])),
+    withMinimumDeliveredForCount(getGroupedPerformance(filteredRecords, ['template', 'product', 'market']), 3),
     'efficiencyScore'
   );
 
@@ -3217,6 +3276,30 @@ function updateEfficiencyScoreChart() {
   renderTopDetailsTable('efficiencyScoreDetails', rows.slice(3), 'efficiencyScore', 'Score');
 }
 
+function updateWorstEfficiencyScoreChart() {
+  const rows = limitBottom(
+    withMinimumDeliveredForCount(getGroupedPerformance(filteredRecords, ['template', 'product', 'market']), 3),
+    'efficiencyScore'
+  );
+
+  const podiumEl = document.getElementById('worstEfficiencyScorePodium');
+  if (podiumEl) {
+    const bottom3 = rows.slice(0, 3);
+    if (bottom3.length) {
+      podiumEl.innerHTML = renderCampaignRankPodium(bottom3, 'Worst by Efficiency Score', true);
+      podiumEl.querySelectorAll('[data-rank-export]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          exportCampaignRankImage(bottom3, 'Worst by Efficiency Score', true, btn.dataset.rankExport);
+        });
+      });
+    } else {
+      podiumEl.innerHTML = '';
+    }
+  }
+
+  renderTopDetailsTable('worstEfficiencyScoreDetails', rows.slice(3), 'efficiencyScore', 'Score');
+}
+
 function updateInsightCharts() {
   updateWowChangeChart();
   updateMarketProductHeatmap();
@@ -3235,6 +3318,8 @@ function updateInsightCharts() {
   updateCampaignGroupPerformanceChart();
   updateDeliveryRateTrendChart();
   updateEfficiencyScoreChart();
+  updateWorstEfficiencyScoreChart();
+  updateTopPerformingCampaignsChart();
 }
 
 /* ============================================================
@@ -3292,9 +3377,9 @@ function updateTable() {
 
   let rows = Object.values(grouped).map(g => ({
     ...g,
-    openRate: g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : (g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : null),
-    clickRate: g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : (g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : null),
-    ctor: g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : (g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : null),
+    openRate: g.hasOpens && g.delivered ? (g.opens / g.delivered * 100) : (g.openRateWeight ? (g.openRateWeightedTotal / g.openRateWeight) : null),
+    clickRate: g.hasClicks && g.delivered ? (g.clicks / g.delivered * 100) : (g.clickRateWeight ? (g.clickRateWeightedTotal / g.clickRateWeight) : null),
+    ctor: g.hasOpens && g.hasClicks && g.opens ? (g.clicks / g.opens * 100) : (g.ctorWeight ? (g.ctorWeightedTotal / g.ctorWeight) : null),
   }));
 
   if (tableSearch) {
@@ -4300,8 +4385,8 @@ function copyKpiMetricsTextFallback() {
   const rows = [
     { label: 'Sent',                    id: 'kpiSent' },
     { label: 'Delivered',               id: 'kpiDelivered' },
-    { label: 'Unique Opens',            id: 'kpiOpens' },
-    { label: 'Unique Clicks',           id: 'kpiClicks' },
+    { label: 'Opens',                   id: 'kpiOpens' },
+    { label: 'Clicks',                  id: 'kpiClicks' },
     { label: 'Delivery Rate',           id: 'kpiDeliveryRate' },
     { label: 'Open Rate',               id: 'kpiOpenRate' },
     { label: 'CTR (Click Rate)',         id: 'kpiClickRate' },
@@ -4367,8 +4452,8 @@ function getKpiCopyRows() {
   return [
     { label: 'Sent', shortLabel: 'Sent', id: 'kpiSent', icon: 'mail' },
     { label: 'Delivered', shortLabel: 'Delivered', id: 'kpiDelivered', icon: 'check' },
-    { label: 'Unique Opens', shortLabel: 'Unique Opens', id: 'kpiOpens', icon: 'eye' },
-    { label: 'Unique Clicks', shortLabel: 'Unique Clicks', id: 'kpiClicks', icon: 'cursor' },
+    { label: 'Opens', shortLabel: 'Opens', id: 'kpiOpens', icon: 'eye' },
+    { label: 'Clicks', shortLabel: 'Clicks', id: 'kpiClicks', icon: 'cursor' },
     { label: 'Delivery Rate', shortLabel: 'Delivery Rate', id: 'kpiDeliveryRate', icon: 'shield' },
     { label: 'Open Rate', shortLabel: 'Open Rate', id: 'kpiOpenRate', icon: 'eye' },
     { label: 'CTR (Click Rate)', shortLabel: 'CTR', note: '(Click Rate)', id: 'kpiClickRate', icon: 'chart' },

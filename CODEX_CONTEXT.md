@@ -66,7 +66,7 @@
 - A small disclaimer under `Week-over-week Change` explains that Start/End are total weighted averages for the selected range, while weekly cells show week-to-week pp changes.
 - Campaign group charts keep semantic groups like Underperforming MTD, Risk of Churn, Retention and Reactivation. `VIP`/`CRM` are handled by a separate Audience filter, not as campaign groups.
 - Added `Top 3 Campaigns by Overall Performance` as a custom canvas podium using Open Rate, Click Rate and CTOR. It now uses a presentation-style UI with medal cards, shaded platforms, compact campaign names and separated metric panels.
-- Top summary uses two side-by-side panels: a red `METRIC / RESULT` table with SVG-style red icons and Sent, Delivered, Unique Opens, Unique Clicks, Delivery Rate, Open Rate, CTR and CTOR; and a red `Performance Funnel` canvas with segment labels inside and values/rates on the right.
+- Top summary uses two side-by-side panels: a red `METRIC / RESULT` table with SVG-style red icons and Sent, Delivered, Opens, Clicks, Delivery Rate, Open Rate, CTR and CTOR; and a red `Performance Funnel` canvas with segment labels inside and values/rates on the right.
 - Layout preference: `Week-over-week Change` sits next to `Daily Performance`; `Product Performance` sits next to `Market x Product Heatmap`.
 - DOC export now includes charts as images and weekly comparison, not the full company list.
 - Export presets:
@@ -94,6 +94,9 @@
 - Added `Last Flop 3 Campaigns by Overall Performance`, a mirrored podium canvas that ranks the currently filtered campaign set by lowest efficiency score and is included in chart export/copy flows.
 - Added `Sendout Volume by Product` next to Product Performance as a donut chart, showing sent volume share by product and included in chart exports.
 - Product Performance displays percent value labels directly on the bars using `chartValueLabelsPlugin`.
+- Added `Worst by Efficiency Score` report next to `Best by Efficiency Score`: a bottom-3 campaign rank podium (mirrored/worst styling) plus a details table for the remaining lowest-scoring campaigns.
+- `Best`/`Worst by Efficiency Score` use `withMinimumDeliveredForCount(rows, 3)` instead of the plain 50-delivered filter, so the podium always shows 3 cards when at least 3 campaigns exist in the filtered set, falling back to all rows only when fewer than 3 campaigns clear the 50-delivered threshold.
+- Added `Top-performing campaigns`, an auto-generated medal-style list (no manual commentary) showing the top 3 campaigns by efficiency score in the current filtered selection, each row with OR/CTR/CTOR badges — no 50-delivered volume threshold, so low-volume standout campaigns can still appear.
 
 ## Технические заметки
 
