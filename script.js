@@ -46,13 +46,11 @@ const COLUMN_MAP = {
   // Opens
   'unique opens': 'opens',
   'opens': 'opens',
-  'gross opens': 'grossOpens',
   'opened': 'opens',
 
   // Clicks
   'unique clicks': 'clicks',
   'clicks': 'clicks',
-  'gross clicks': 'grossClicks',
   'clicked': 'clicks',
   'sms - clicked': 'clicks',
 
@@ -90,16 +88,12 @@ function normaliseRow(rawRow, headerMap, formattedRow) {
     delivered: 0,
     opens: 0,
     clicks: 0,
-    grossOpens: 0,
-    grossClicks: 0,
     openRate: null,
     clickRate: null,
     ctor: null,
     deliveryRate: null,
     hasOpens: false,
     hasClicks: false,
-    hasGrossOpens: false,
-    hasGrossClicks: false,
     hasOpenRate: false,
     hasClickRate: false,
     hasCtor: false,
@@ -110,15 +104,11 @@ function normaliseRow(rawRow, headerMap, formattedRow) {
     const canon = headerMap[key];
     if (!canon) continue;
 
-    // Remember that Gross columns exist even when a particular row is blank.
-    if (canon === 'grossOpens') rec.hasGrossOpens = true;
-    if (canon === 'grossClicks') rec.hasGrossClicks = true;
-
     if (value === null || value === undefined || String(value).trim() === '') continue;
 
     if (canon === 'date') {
       rec.date = normaliseDateValue(value);
-    } else if (['sent', 'delivered', 'opens', 'clicks', 'grossOpens', 'grossClicks'].includes(canon)) {
+    } else if (['sent', 'delivered', 'opens', 'clicks'].includes(canon)) {
       rec[canon] = parseNumber(value);
       if (canon === 'opens') rec.hasOpens = true;
       if (canon === 'clicks') rec.hasClicks = true;
@@ -152,17 +142,6 @@ function normaliseRow(rawRow, headerMap, formattedRow) {
 
   if (!rec.product) rec.product = '(Unknown)';
   if (!rec.market) rec.market = '(Unknown)';
-
-  // Gross engagement is the primary basis for dashboard counts and rates.
-  // Files without Gross columns keep using their regular Opens/Clicks fields.
-  if (rec.hasGrossOpens) {
-    rec.opens = rec.grossOpens;
-    rec.hasOpens = true;
-  }
-  if (rec.hasGrossClicks) {
-    rec.clicks = rec.grossClicks;
-    rec.hasClicks = true;
-  }
 
   rec.product = normaliseProduct(rec.product);
   rec.market = normaliseMarket(rec.market);
